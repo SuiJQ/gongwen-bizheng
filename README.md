@@ -5,7 +5,7 @@
 - **版本**：0.4.2（frontmatter `metadata.version`；变更见 `CHANGELOG.md`）
 - **许可证**：GPL-3.0-only（全文见 `LICENSE`，GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007）
 - **安装位置**：`~/.workbuddy/skills/gongwen-bizheng/`（用户级技能；技能目录属系统约定路径）
-- **上游**：`github.com/SuiJQ/gongwen-bizheng` v0.2.1，2026-11-15 导入，13 个文件经 git blob SHA-1 校验
+- **上游**：`github.com/SuiJQ/gongwen-bizheng`。v0.2.1 于 2026-11-15 导入（13 个文件经 git blob SHA-1 校验）；v0.4.2 已于同日推送至 `main`（commit `d3c6009`，31 文件，git blob SHA-1 与本地逐文件一致）
 
 ## 目录结构
 
