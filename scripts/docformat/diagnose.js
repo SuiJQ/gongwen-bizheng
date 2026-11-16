@@ -12,7 +12,7 @@ const {
   getLineSpacing, getFirstRunFont, getFirstRunSize, hasMedia, unescapeXml, readTag,
 } = require('./xml');
 const { detectType, refineTypes } = require('./detect');
-const { isGeneratorValue, CORE_PART, APP_PART } = require('./meta');
+const { isGeneratorValue, isAppPlatformMismatch, CORE_PART, APP_PART } = require('./meta');
 
 const CM_TOLERANCE = 0.2;
 
@@ -287,7 +287,7 @@ function diagnoseText(rows, issues) {
   });
 }
 
-function diagnoseMetadata(pkg, issues) {
+function diagnoseMetadata(pkg, issues, platform) {
   const core = pkg.getText(CORE_PART);
   const app = pkg.getText(APP_PART);
   if (!core) {
@@ -319,8 +319,12 @@ function diagnoseMetadata(pkg, issues) {
   }
   if (app) {
     const application = readTag(app, 'Application');
-    if (application && /macintosh/i.test(application) && process.platform === 'win32') {
-      issues.push({ code: 'META_APP', level: 'warn', category: 'metadata', message: 'Application 与实际平台矛盾：' + application });
+    // 与 meta.js 共用同一张平台规则表：诊断报的问题，正是 smart 会修的那条
+    if (isAppPlatformMismatch(application, platform)) {
+      issues.push({
+        code: 'META_APP', level: 'warn', category: 'metadata',
+        message: 'Application 与运行平台（' + (platform || process.platform) + '）矛盾：' + application,
+      });
     }
     if (readTag(app, 'TotalTime') === '0') {
       issues.push({ code: 'META_TOTALTIME', level: 'info', category: 'metadata', message: 'TotalTime=0，文档从未被编辑的特征' });
@@ -349,11 +353,12 @@ function diagnoseMetadata(pkg, issues) {
  */
 function diagnose(pkg, preset, options) {
   const issues = [];
+  const opts = options || {};
   const geometry = diagnoseGeometry(pkg, preset, issues);
   const para = diagnoseParagraphs(pkg, preset, issues);
   diagnoseElements(para.types, issues);
   diagnoseText(para.rows, issues);
-  diagnoseMetadata(pkg, issues);
+  diagnoseMetadata(pkg, issues, opts.platform);
 
   const summary = { error: 0, warn: 0, info: 0 };
   issues.forEach((i) => { summary[i.level] = (summary[i.level] || 0) + 1; });

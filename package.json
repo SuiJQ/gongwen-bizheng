@@ -1,6 +1,6 @@
 {
   "name": "gongwen-bizheng",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "description": "党政公文写作技能包的脚本层：文本层格式机检、净稿导出 DOCX、DOCX 版式规范化与元数据清理（纯 Node，零第三方依赖）",
   "license": "GPL-3.0-only",
@@ -8,9 +8,12 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node tests/docformat_test.js && node tests/robustness_test.js",
+    "test": "node tests/run_all.js",
     "test:format": "node tests/docformat_test.js",
+    "test:gate": "node tests/gate_test.js",
     "test:robust": "node tests/robustness_test.js",
+    "test:rhythm": "node tests/rhythm_test.js",
+    "test:cross": "node tests/crossplatform_test.js",
     "check": "node scripts/check_format.js",
     "analyze": "node scripts/format_docx.js analyze"
   }

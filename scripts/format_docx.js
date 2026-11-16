@@ -15,6 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const api = require('./docformat/index');
+const { readText } = require('./docformat/textio');
 
 const HELP = `公文 DOCX 版式修复与元数据清理（纯 Node，无第三方依赖）
 
@@ -40,6 +41,7 @@ const HELP = `公文 DOCX 版式修复与元数据清理（纯 Node，无第三�
   --no-metadata                不做元数据清理
   --author <name>              清理后写入的作者名（默认留空）
   --application <name>         Application 字段（默认 Microsoft Office Word）
+  --platform <p>               Application 平台判定口径：win32 | darwin | linux（默认跟随本机）
   --keep-thumbnail             保留 docProps/thumbnail.jpeg
   --split-headings             拆分"标题+正文"混排段落
   --json                       analyze 模式输出 JSON
@@ -52,6 +54,8 @@ const HELP = `公文 DOCX 版式修复与元数据清理（纯 Node，无第三�
   node scripts/format_docx.js smart 来文.docx 来文_规范.docx --author 张三 --force
   node scripts/format_docx.js meta 报告.docx 报告_清理.docx --keep-thumbnail
 `;
+
+const PLATFORMS = ['win32', 'darwin', 'linux'];
 
 const FLAGS = {
   '--deep-clean': ['deepClean', true],
@@ -74,6 +78,7 @@ const VALUED = {
   '--page-number-position': 'pageNumberPosition',
   '--author': 'author',
   '--application': 'application',
+  '--platform': 'platform',
 };
 
 function parseArgs(argv) {
@@ -118,7 +123,8 @@ function buildOptions(args) {
   });
   if (args.preset) options.preset = args.preset;
   if (args.customSettings) {
-    const raw = fs.readFileSync(args.customSettings, 'utf8');
+    // Windows 编辑器另存 JSON 常带 BOM，JSON.parse 会直接抛错，故走统一解码
+    const raw = readText(args.customSettings);
     const parsed = JSON.parse(raw);
     options.overrides = parsed.overrides || parsed;
   }
@@ -130,6 +136,15 @@ function buildOptions(args) {
     options.overrides.pageNumber = options.overrides.pageNumber || {};
     if (args.pageNumberStyle) options.overrides.pageNumber.style = args.pageNumberStyle;
     if (args.pageNumberPosition) options.overrides.pageNumber.position = args.pageNumberPosition;
+  }
+  if (args.platform) {
+    // 平台口径显式化：默认跟随宿主，显式传入时用于复现/回归（不影响本机实际行为）
+    if (!PLATFORMS.includes(args.platform)) {
+      throw new Error('--platform 只接受 ' + PLATFORMS.join(' / ') + '，收到：' + args.platform);
+    }
+    options.platform = args.platform;
+    options.metadataOptions = options.metadataOptions || {};
+    options.metadataOptions.platform = args.platform;
   }
   return options;
 }

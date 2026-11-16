@@ -1,5 +1,78 @@
 # 变更记录
 
+## 0.7.2（2026-11-16）
+
+性质：**跨平台收口**。公文能力、门禁判据、版式参数一律未变；只把"假定宿主是 Windows"的实现与测试改成三平台同一套判据。文件数 42 → 45。
+
+### 1｜平台判定从硬编码改为规则表（`meta.js` / `diagnose.js`）
+
+原实现把 `process.platform === 'win32'` 直接写在清理侧与诊断侧两处：
+
+```js
+// 旧的 meta.js:216
+const macOnWindows = application && /macintosh/i.test(application) && process.platform === 'win32';
+```
+
+后果有三层，都不只是"测试红"：
+
+1. **Linux/macOS 上这条清理永不生效**，同一份来文在 Windows 上被清、在其它平台上原样留下 Macintosh 签名；
+2. **诊断侧（`diagnose.js:322`）与清理侧各写一遍**，两边一旦漂移就会出现"报的不修、修的不报"；
+3. **回归用例 `Application 与平台一致、统计回填` 在非 Windows 机器上必然失败**——断言的是 win32 分支的产物，而夹具在 Linux 上根本走不到那个分支。
+
+现在集中为一张表，并允许注入平台（`opts.platform`），两处共用同一判定函数：
+
+| 宿主 | 判定 | 原因 |
+|---|---|---|
+| `win32` | Macintosh 签名 → 矛盾，归一为 `Microsoft Office Word` | 本机是 Windows Word（与旧行为等价，无回归） |
+| `linux` | 同上 | 本机没有 Word，Mac 签名只可能来自模板 |
+| `darwin` | **不判矛盾**，保留原值 | Mac Word 签名在本机合理，不抹掉真实作者平台 |
+| 其他 | 按 `linux` | 同样产不出 Mac Word |
+
+行为变化只发生在非 Windows 宿主：Linux/macOS 现在也会归一 Macintosh 签名（Windows 侧与 0.7.1 完全一致）。`--platform win32|darwin|linux` 可显式指定口径，非法值 exit 2。
+
+### 2｜文本输入统一解码（新增 `scripts/docformat/textio.js`）
+
+三个纯文本入口（`check_format.js`、`check_rhythm.js`、`export_docx.js`）原先各自 `fs.readFileSync(file, 'utf8')`，在三种真实存在的 Windows 产物上会给出错误结论：
+
+| 输入形态 | 旧行为 | 现在 |
+|---|---|---|
+| UTF-8 BOM（记事本、Excel 导出、`Out-File`） | BOM 粘在首行，标题/文种识别与逐行正则整体错位一个字符 | 剥 BOM |
+| UTF-16LE/BE（记事本「Unicode」） | 按 utf8 解出夹 NUL 的乱码，检查静默得出错误结论 | 按 BOM 判编码解码 |
+| CRLF 与单独的 CR | `split(/\r?\n/)` 漏掉单独 CR，整篇被当成一行，逐行检查全部失效 | 先归一为 `\n` |
+
+`format_docx.js --custom-settings` 的 JSON 也改走同一层：Windows 编辑器另存 JSON 常带 BOM，`JSON.parse` 会直接抛 `Unexpected token`，表现为「参数解析失败」而非「文件有问题」。
+
+顺带修掉 `export_docx.js` 的一个具体缺陷：带 BOM 的净稿导出后，BOM 字符会作为正文首字符进 DOCX（肉眼不可见，但让首段判定不再是标题）。
+
+### 3｜路径比较按文件系统语义（`index.js`）
+
+`assertDistinctPaths` 原只在 `win32` 折叠大小写。macOS 默认 APFS 同样大小写不敏感，`analyze a.docx` 后 `smart a.docx A.docx --force` 会被判成"不同文件"而原地覆盖源稿。现在 `win32` 与 `darwin` 一并折叠，Linux 保持敏感；函数增加可选 `platform` 参数以便回归注入。
+
+### 4｜测试入口不再短路（新增 `tests/run_all.js`）
+
+`npm test` 原为 `node a && node b`：前一套失败，后面几套根本不跑——0.7.1 的 Linux 实测就是 `docformat_test` 一红，`gate`/`robustness`/`rhythm` 三套全部未执行。而 `&` 串行写法在 `cmd.exe` 下语义不同，不能直接用。
+
+改为 `node tests/run_all.js`：逐套 `spawnSync(process.execPath, [file])`（参数走数组、不经 shell），全跑完再汇总；**任一失败即整体 exit 1，但失败不遮住后续套件**。
+
+### 5｜回归项变化
+
+| 套件 | 0.7.1 | 0.7.2 | 变化 |
+|---|---|---|---|
+| `docformat_test.js` | 36 | **38** | 原 1 项平台用例拆成 3 项：宿主默认口径、三平台注入、诊断与清理同源 |
+| `gate_test.js` | 23 | 23 | 未动 |
+| `robustness_test.js` | 11 | 11 | 未动 |
+| `rhythm_test.js` | 9 | 9 | 未动 |
+| `crossplatform_test.js` | — | **11** | 新增：CRLF/CR、UTF-8 BOM、UTF-16LE/BE、导出不残留 BOM、节奏指标随换行符不变、`--platform` 生效与非法值、清理侧传递、JSON BOM、路径大小写语义 |
+| 合计 | 79 | **92** | |
+
+### 验证记录与未做项
+
+- 本地：Linux（`5.10.134-18.0.13.lifsea8.x86_64`）+ Node v22.23.4，`npm test` 5/5 套、92/92 项通过；另手工跑通 `check_format → export_docx → analyze → smart` 全链路。
+- **未在 Windows 上实机复跑**：本次改动在 Linux 完成，没有可用的 Windows 宿主。win32 分支的等价性由用例注入保证（`--platform` 与 `opts.platform`），但 Windows 特有的文件锁、控制台代码页（GBK 下中文 stdout 可能显示为乱码）等环境问题不在 Node 层可测范围，须在开发机复跑一遍 `npm test`。
+- `tools/verify.py`（116 项）与 `baseline-*.json`、`release-*` 快照**不随包分发**，本轮未复跑；新增 3 个文件后，需在开发机重生成 `baseline-v0.7.2.json` 并按新文件数校准文件总数断言（42 → 45）。
+- 未改动任何公文规则、门禁判据、版式参数与 `references/` 内容；`SKILL.md` 仅动 frontmatter 版本号。
+
+
 ## 0.7.1（2026-11-16）
 
 性质：**文档陈欠修复 + 验收盲区补测**。无新增能力，不动 `SKILL.md` 正文，不改任何脚本行为；文件数仍为 42。起因是一次例行状况核查发现：`verify.py` 114 项全过，README 却有 5 处数字停留在旧版本——**「验收全绿」不等于「文档没漂移」**。

@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { readZip } = require('./docformat/zip');
+const { readText } = require('./docformat/textio');
 
 const HELP = `用法: node check_format.js <文件> [--json] [--max-chars N]
 
@@ -448,7 +449,7 @@ function main() {
       text = docxToText(args.file);
       source = 'docx';
     } else {
-      text = fs.readFileSync(args.file, 'utf8');
+      text = readText(args.file);
     }
   } catch (error) {
     process.stderr.write('读取失败：' + error.message + '\n');

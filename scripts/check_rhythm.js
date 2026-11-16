@@ -19,7 +19,7 @@
  */
 'use strict';
 
-const fs = require('fs');
+const { readText } = require('./docformat/textio');
 
 const HELP = `用法: node check_rhythm.js <文件.md|txt> [--json]
 
@@ -249,7 +249,7 @@ function main() {
   }
   let text;
   try {
-    text = fs.readFileSync(args.file, 'utf8');
+    text = readText(args.file);
   } catch (e) {
     process.stderr.write('读取失败：' + e.message + '\n');
     return 2;

@@ -226,12 +226,52 @@ test('创建与修改时间不同且合理', () => {
   assert.ok(Number(created.slice(0, 4)) >= 2020, '时间异常：' + created);
 });
 
-test('Application 与平台一致、统计回填', () => {
+test('统计回填与 TotalTime 清理（宿主默认平台）', () => {
   const app = open(OUT).getText('docProps/app.xml');
-  assert.ok(/<Application>Microsoft Office Word<\/Application>/.test(app));
-  assert.ok(!/Macintosh/.test(app));
-  assert.ok(!/<TotalTime>/.test(app));
-  assert.ok(Number(/<Words>(\d+)</.exec(app)[1]) > 0);
+  assert.ok(!/<TotalTime>/.test(app), 'TotalTime=0 未清除');
+  assert.ok(Number(/<Words>(\d+)</.exec(app)[1]) > 0, '字数未回填');
+  // 宿主默认口径：darwin 保留 Mac Word 签名（本机合理），其余平台归一为 Windows Word 基线
+  if (process.platform === 'darwin') {
+    assert.ok(/<Application>Microsoft Macintosh Word<\/Application>/.test(app), app);
+  } else {
+    assert.ok(/<Application>Microsoft Office Word<\/Application>/.test(app), '未归一：' + app);
+    assert.ok(!/Macintosh/.test(app), '仍含 Macintosh');
+  }
+});
+
+test('Application 平台规则可注入：win32/linux 归一、darwin 保留（v0.7.2 跨平台）', () => {
+  const cases = [
+    { platform: 'win32', keepsMac: false },
+    { platform: 'linux', keepsMac: false },
+    { platform: 'darwin', keepsMac: true },
+  ];
+  cases.forEach((c) => {
+    const src = buildFixture(path.join(TMP, 'plat-' + c.platform + '.docx'));
+    const out = path.join(TMP, 'plat-' + c.platform + '-out.docx');
+    const r = api.processFile(src, out, { force: true, metadataOptions: { platform: c.platform } });
+    const app = open(out).getText('docProps/app.xml');
+    const label = c.platform + '：';
+    const flagged = r.steps.metadata.changes.some((x) => /平台/.test(x.detail));
+    if (c.keepsMac) {
+      assert.ok(/<Application>Microsoft Macintosh Word<\/Application>/.test(app), label + 'Mac 签名被误改：' + app);
+      assert.ok(!flagged, label + '不该报平台矛盾');
+    } else {
+      assert.ok(/<Application>Microsoft Office Word<\/Application>/.test(app), label + '未归一：' + app);
+      assert.ok(!/Macintosh/.test(app), label + '仍含 Macintosh');
+      assert.ok(flagged, label + '未记录平台矛盾修复');
+    }
+    const report = api.analyzeFile(out, { platform: c.platform });
+    assert.ok(!report.issues.some((i) => i.code === 'META_APP'), label + '清理后 analyze 仍报 META_APP');
+  });
+});
+
+test('analyze 的 META_APP 判定与清理口径同源', () => {
+  const win = api.analyzeFile(SRC, { platform: 'win32' });
+  const lnx = api.analyzeFile(SRC, { platform: 'linux' });
+  const mac = api.analyzeFile(SRC, { platform: 'darwin' });
+  assert.ok(win.issues.some((i) => i.code === 'META_APP'), 'win32 未报 META_APP');
+  assert.ok(lnx.issues.some((i) => i.code === 'META_APP'), 'linux 未报 META_APP');
+  assert.ok(!mac.issues.some((i) => i.code === 'META_APP'), 'darwin 误报 META_APP');
 });
 
 test('清除 rsid 会话标记', () => {

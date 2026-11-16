@@ -85,10 +85,16 @@ function writeOutput(pkg, outputPath, options) {
 /**
  * 拒绝「输出路径 = 输入文件」。--force 只应对已存在的**另一个**文件生效；
  * 若两者同一文件，--force 会先读后写把源文件顶掉（v0.4.1 及以前无提示）。
+ *
+ * 路径比较按文件系统语义：Windows 与 macOS 默认大小写不敏感（`A.DOCX` 与
+ * `a.docx` 是同一个文件），Linux 大小写敏感。v0.7.2 起 darwin 一并折叠大小写，
+ * 否则 macOS 上会漏判同一文件而原地覆盖源稿。
  */
-function assertDistinctPaths(inputPath, outputPath) {
+function assertDistinctPaths(inputPath, outputPath, platform) {
   if (!inputPath || !outputPath) return;
-  const shrink = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+  const host = platform || process.platform;
+  const caseInsensitive = host === 'win32' || host === 'darwin';
+  const shrink = (p) => (caseInsensitive ? p.toLowerCase() : p);
   let a = shrink(path.resolve(inputPath));
   let b = shrink(path.resolve(outputPath));
   if (a !== b) {

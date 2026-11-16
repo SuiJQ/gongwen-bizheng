@@ -18,6 +18,7 @@ const { DocxPackage } = require('./docformat/docpkg');
 const { getPreset } = require('./docformat/preset');
 const { formatDocument, assertDistinctPaths } = require('./docformat/index');
 const { XML_DECL, escapeText } = require('./docformat/xml');
+const { readText } = require('./docformat/textio');
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -144,13 +145,13 @@ function main() {
 
   let text;
   try {
-    text = fs.readFileSync(args.input, 'utf8');
+    text = readText(args.input);
   } catch (error) {
     process.stderr.write('读取失败：' + error.message + '\n');
     return 2;
   }
 
-  const rawLines = text.split(/\r?\n/);
+  const rawLines = text.split('\n');  // readText 已把 CRLF / CR 归一为 \n
   const paragraphs = linesToParagraphs(rawLines);
   if (!paragraphs.length) {
     process.stderr.write('输入为空，未生成文件。\n');
