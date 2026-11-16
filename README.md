@@ -2,7 +2,7 @@
 
 面向中文公文与机关材料的写作技能包：覆盖法定 15 文种与讲话、总结、方案、调研报告、经验材料、汇报、会议材料等，支持**起草／修改／审核／片段补写**四类任务。采用单 agent、S0–S6 七阶段流程、G1–G7 取证式门禁，交付物固定为「正文」与「注意事项」两部分。
 
-- **版本**：0.7.0（frontmatter `metadata.version`；变更见 `CHANGELOG.md`）
+- **版本**：0.7.1（frontmatter `metadata.version`；变更见 `CHANGELOG.md`）
 - **许可证**：GPL-3.0-only（全文见 `LICENSE`，GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007）
 - **安装位置**：`~/.workbuddy/skills/gongwen-bizheng/`（用户级技能；技能目录属系统约定路径）
 - **上游**：`github.com/SuiJQ/gongwen-bizheng`。v0.2.1 于 2026-11-15 导入（13 个文件经 git blob SHA-1 校验）；v0.4.2 已于同日推送至 `main`（commit `d3c6009`，31 文件，git blob SHA-1 与本地逐文件一致）
@@ -37,8 +37,9 @@ scripts/
   docformat/                   版式能力实现，12 个模块（zip、docpkg、xml、detect、ppr、format、structure、clean、meta、diagnose、preset、index）
 tests/
   docformat_test.js            版式能力回归（36 项）
-  gate_test.js                 门禁有效性回归（19 项，v0.6.3 新增 / v0.6.4 扩充）
+  gate_test.js                 门禁有效性回归（23 项，v0.6.3 新增 / v0.6.4・v0.7.0 扩充）
   robustness_test.js           畸形输入与健壮性回归（11 项，v0.5.0 新增）
+  rhythm_test.js               句式节奏回归（9 项，v0.7.0 新增，含区分力双向验证）
 package.json                   脚本层入口：npm test；engines node>=18
 .gitignore                     排除 experience/E-*.md，防止本地经验条目误提交
 experience/                    本地经验库（v0.6.0 新增）
@@ -55,13 +56,14 @@ experience/                    本地经验库（v0.6.0 新增）
 
 ```bash
 node scripts/check_format.js <正文.md|txt|docx> --json       # 退出码 0 通过 / 1 有项 / 2 错误
+node scripts/check_rhythm.js <正文.md|txt> --json             # 只检测句式节奏，不改写
 node scripts/export_docx.js <净稿.md|txt> <输出.docx> --dry-run
 node scripts/export_docx.js <净稿.md|txt> <输出.docx> --force
 node scripts/format_docx.js analyze <来文.docx> --json        # 只读诊断，不改文件
 node scripts/format_docx.js smart <来文.docx> <出.docx> --author 张三 --force
 ```
 
-`export_docx.js` 与 `format_docx.js` 默认拒绝覆盖已有输出；`--dry-run` 只解析不写文件。三个脚本仅使用 Node 内置模块，无网络访问、无删除操作。
+`export_docx.js` 与 `format_docx.js` 默认拒绝覆盖已有输出；`--dry-run` 只解析不写文件。四个脚本仅使用 Node 内置模块，无网络访问、无删除操作。
 
 > **v0.4.1 起导出与排版同源**：`export_docx.js` 不再自带字体字号常量，改为先出骨架包、再走 `docformat` 管线（`preset` 定参数、`detect` 定段落类型、`ppr` 装配属性）。因此导出产物与 `format_docx.js smart` 产物版式一致，`analyze` 对导出产物应为 0 阻断项。
 > 随之而来的行为变化：Markdown 的 `##`/`###` 只用于剥离标记，不再决定字体——层次标题按公文层次序数（一、／（一）／1.）判定，与 `analyze` 判据同一套。
@@ -147,7 +149,7 @@ v0.2.1 全包检索未检出对上述技能或资料包的引用、致谢；自 
 
 ## 版本字段说明
 
-内置 `skill-creator/SKILL.md:34-36` 规定 frontmatter 必需字段仅 `name` 与 `description`；平台对 `metadata.version` 的识别规则**未检出**。本机已验证含 `license`／`metadata` 的本技能可正常加载，故保留该字段并随版本推进（当前 0.7.0），同时在本文件写明版本；不臆造顶层 `version` 字段。
+内置 `skill-creator/SKILL.md:34-36` 规定 frontmatter 必需字段仅 `name` 与 `description`；平台对 `metadata.version` 的识别规则**未检出**。本机已验证含 `license`／`metadata` 的本技能可正常加载，故保留该字段并随版本推进（当前 0.7.1），同时在本文件写明版本；不臆造顶层 `version` 字段。
 
 ## 回归与回滚
 
@@ -160,8 +162,12 @@ v0.2.1 全包检索未检出对上述技能或资料包的引用、致谢；自 
 - v0.5.0 基线：`baseline-v0.5.0.json`（35 文件 SHA-256，新增 `references/12-redlines.md`、`package.json`、`tests/robustness_test.js`）；整包快照 `release-v0.5.0/`
 - v0.6.0 基线：`baseline-v0.6.0.json`（38 文件 SHA-256，新增 `references/13-experience.md`、`experience/README.md`、`experience/INDEX.md`）；整包快照 `release-v0.6.0/`
 - v0.6.1 基线：`baseline-v0.6.1.json`（38 文件 SHA-256，修复 4 项新引入缺陷，未增删文件）；整包快照 `release-v0.6.1/`
-- v0.6.2 基线：`baseline-v0.6.2.json`（38 文件 SHA-256，P2 技术债清理，未增删文件）；整包快照 `release-v0.6.2/`
-- 验收脚本：`tools/verify.py`（v0.6.2 为 105 项，含 4 个影子任务走查、导出产物自检回归、两条路径页脚一致性回归、版式与健壮性两套回归、资源索引覆盖全部 14 个子文件；另有断言校验 pPr 子元素顺序符合 CT_PPrBase、package.json 版本与 frontmatter 一致、CHANGELOG 版本段唯一、experience/ 无越界文件且条目含七项字段、.gitignore 排除本地经验条目）；缺陷与观察项闭合核验 `tools/verify_issues.py`（22 条）；其余工具 `tools/` 下可复跑
+- v0.6.2 基线：`baseline-v0.6.2.json`（39 文件 SHA-256，新增 `.gitignore`，P2 技术债清理）；整包快照 `release-v0.6.2/`
+- v0.6.3 基线：`baseline-v0.6.3.json`（40 文件 SHA-256，新增 `tests/gate_test.js`，门禁有效性修复）；整包快照 `release-v0.6.3/`
+- v0.6.4 基线：`baseline-v0.6.4.json`（40 文件 SHA-256，清掉 0.6.3 明确保留的 5 项遗留，未增删文件）；整包快照 `release-v0.6.4/`
+- v0.7.0 基线：`baseline-v0.7.0.json`（42 文件 SHA-256，新增 `scripts/check_rhythm.js`、`tests/rhythm_test.js`）；整包快照 `release-v0.7.0/`
+- v0.7.1 基线：`baseline-v0.7.1.json`（42 文件 SHA-256，文档陈欠修复 + 验收盲区补测，未增删文件）；整包快照 `release-v0.7.1/`
+- 验收脚本：`tools/verify.py`（v0.7.1 为 114 项，含 4 个影子任务走查、导出产物自检回归、两条路径页脚一致性回归、版式与健壮性・门禁・句式节奏四套回归、README 声明的测试项数与实际 PASS 数一致性、README 测试清单／脚本数／基线列表覆盖，资源索引覆盖全部 14 个子文件；另有断言校验 pPr 子元素顺序符合 CT_PPrBase、package.json 版本与 frontmatter 一致、CHANGELOG 版本段唯一、experience/ 无越界文件且条目含七项字段、.gitignore 排除本地经验条目）；缺陷与观察项闭合核验 `tools/verify_issues.py`（22 条）；其余工具 `tools/` 下可复跑
 - 功能回归：`D:/SuiJQ/WorkBuddy/数据/gongwen-bizheng/tests/functional_test.py` 用真实公文样例端到端验证三个脚本（开发目录，未随包分发）；`tests/docformat_test.js` 为版式能力的 36 项纯 Node 回归（zip 往返、版式属性、元数据清理、幂等、诊断、边界、表格保真、图片与媒体部件保真、CRC 校验、ZIP64 拒绝、同路径拒绝、多节分节符保真、自动编号与样式引用保真、属性含 `>` 的 pPr 幂等、2000 段性能基线、多节页码引用、PAGE 域精确删除、三脚本退出码一致）
 
 回滚：以对应快照整包覆盖安装目录，并按相应 `baseline-*.json` 校验文件数与 SHA-256；回滚到 v0.4.2 时需**删除 `references/11-vocab.md`**（文件数 32 → 31）并还原 `SKILL.md`・`06-language.md`・`07-review.md` 的索引与判据行；回滚到 v0.4.1 时另需还原 `zip.js`・`docpkg.js`（读取校验）与 `index.js`（同路径保护），并撤回 `tests/docformat_test.js` 的 6 项新用例；回滚到 v0.4.0 时另需还原 `scripts/export_docx.js` 并撤销 `preset.js`・`format.js` 的页脚与 sectPr 修正；回滚到 v0.3.0 时再移除 `scripts/format_docx.js` 与 `scripts/docformat/`（14 个文件）。触发条件：影子任务任一阶段缺失、脚本退出码异常、路径引用断链，或判定证据／确认点／降级纪律被削弱。
