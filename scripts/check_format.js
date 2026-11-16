@@ -2,14 +2,15 @@
 /**
  * 公文文本层格式机检（可选，零第三方依赖）。
  *
- * 支持输入：.txt / .md / .docx（DOCX 会解包 word/document.xml 提取文本）。
+ * 支持输入：.txt / .md / .docx（DOCX 由 docformat/zip 读取，与 format_docx 同一套防护：
+ * CRC-32 校验、ZIP64 拒绝、单条目解压上限）。
  * 只检查可从纯文本判定的项目；字体、字号、页边距、印章位置需 DOCX 或人工核对。
  */
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
-const zlib = require('zlib');
+const { readZip } = require('./docformat/zip');
 
 const HELP = `用法: node check_format.js <文件> [--json] [--max-chars N]
 
@@ -62,50 +63,14 @@ function decodeXml(text) {
     .replace(/&amp;/g, '&');
 }
 
-function readZipEntry(file, entryName) {
-  const buffer = fs.readFileSync(file);
-  let eocd = -1;
-  for (let i = buffer.length - 22; i >= 0; i -= 1) {
-    if (buffer.readUInt32LE(i) === 0x06054b50) {
-      eocd = i;
-      break;
-    }
-  }
-  if (eocd < 0) throw new Error('不是有效的 ZIP/DOCX 文件');
-
-  const count = buffer.readUInt16LE(eocd + 10);
-  let pointer = buffer.readUInt32LE(eocd + 16);
-
-  for (let n = 0; n < count; n += 1) {
-    if (buffer.readUInt32LE(pointer) !== 0x02014b50) break;
-    const method = buffer.readUInt16LE(pointer + 10);
-    const compressedSize = buffer.readUInt32LE(pointer + 20);
-    const nameLength = buffer.readUInt16LE(pointer + 28);
-    const extraLength = buffer.readUInt16LE(pointer + 30);
-    const commentLength = buffer.readUInt16LE(pointer + 32);
-    const localOffset = buffer.readUInt32LE(pointer + 42);
-    const name = buffer.slice(pointer + 46, pointer + 46 + nameLength).toString('utf8');
-    pointer += 46 + nameLength + extraLength + commentLength;
-
-    if (name !== entryName) continue;
-
-    const localNameLength = buffer.readUInt16LE(localOffset + 26);
-    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
-    const start = localOffset + 30 + localNameLength + localExtraLength;
-    const data = buffer.slice(start, start + compressedSize);
-
-    if (method === 0) return data.toString('utf8');
-    if (method === 8) return zlib.inflateRawSync(data).toString('utf8');
-    throw new Error('不支持的 ZIP 压缩方式：' + method);
-  }
-
-  throw new Error('DOCX 中未找到 ' + entryName);
-}
-
 function docxToText(file) {
-  const xml = readZipEntry(file, 'word/document.xml');
+  // 统一使用 docformat/zip 的读取器：带 CRC-32 校验、ZIP64 拒绝、解压上限，
+  // 避免与 format_docx 出现两套读取行为（v0.4.4 前 check_format 自带一套无校验实现）。
+  const { entries } = readZip(fs.readFileSync(file));
+  const part = entries.get('word/document.xml');
+  if (!part) throw new Error('DOCX 中未找到 word/document.xml');
   return decodeXml(
-    xml
+    part.data.toString('utf8')
       .replace(/<w:tab[^>]*\/>/g, '\t')
       .replace(/<w:br[^>]*\/>/g, '\n')
       .replace(/<\/w:p>/g, '\n')

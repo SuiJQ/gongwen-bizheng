@@ -39,14 +39,11 @@ function hasSentenceEnd(text) {
 /**
  * @param {object} ctx
  *   text       段落纯文本（已 trim）
- *   rawText    未 trim 文本（判断前导空格）
  *   index      在正文段落序列中的序号（不含表内段落）
  *   total      正文段落总数
  *   align      段落对齐值（left/center/right/both/null）
  *   hasMedia   是否含图片/媒体
- *   hasPageBreak 是否含分页符
  *   firstNameIndex 第一个非空段落序号
- *   prevType   上一段类型
  * @returns {string} title|docNumber|recipient|heading1..4|body|closing|signature|date|attachment|attachmentTitle|cc|sourceNote|media|blank|unknown
  */
 function detectType(ctx) {

@@ -79,7 +79,8 @@ const official = {
     date: para('仿宋_GB2312', 16, { align: 'right', rightChars: 400 }),
     attachment: para('仿宋_GB2312', 16, { align: 'left', hangingChars: 300 }),
     attachmentTitle: para('仿宋_GB2312', 16, { align: 'left' }),
-    cc: para('仿宋_GB2312', 16, { align: 'left' }),
+    // 抄送机关按 GB/T 9704-2012 7.4.2 用 4 号仿宋（14pt = 28 半磅），非三号
+    cc: para('仿宋_GB2312', 14, { align: 'left' }),
     sourceNote: para('仿宋_GB2312', 16, { align: 'both', firstLineChars: 200 }),
     // 无法判定时按正文处理
     unknown: para('仿宋_GB2312', 16, { align: 'both', firstLineChars: 200 }),

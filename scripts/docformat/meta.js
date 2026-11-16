@@ -16,7 +16,7 @@
  */
 'use strict';
 
-const { XML_DECL, escapeText, unescapeXml } = require('./xml');
+const { XML_DECL, escapeText, unescapeXml, readTag } = require('./xml');
 const { documentStats } = require('./clean');
 
 const CORE_PART = 'docProps/core.xml';
@@ -69,12 +69,7 @@ function w3cdtf(date) {
   return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
-function readTag(xml, tag) {
-  const re = new RegExp('<' + tag + '(?:\\s[^>]*)?>([\\s\\S]*?)</' + tag + '>|<' + tag + '(?:\\s[^>]*)?/>');
-  const m = re.exec(xml);
-  if (!m) return null;
-  return m[1] === undefined ? '' : unescapeXml(m[1]);
-}
+
 
 function writeTag(xml, tag, value) {
   const open = new RegExp('<' + tag + '(\\s[^>]*)?>([\\s\\S]*?)</' + tag + '>');

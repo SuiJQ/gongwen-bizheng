@@ -2,7 +2,7 @@
 
 面向中文公文与机关材料的写作技能包：覆盖法定 15 文种与讲话、总结、方案、调研报告、经验材料、汇报、会议材料等，支持**起草／修改／审核／片段补写**四类任务。采用单 agent、S0–S6 七阶段流程、G1–G7 取证式门禁，交付物固定为「正文」与「注意事项」两部分。
 
-- **版本**：0.4.2（frontmatter `metadata.version`；变更见 `CHANGELOG.md`）
+- **版本**：0.6.2（frontmatter `metadata.version`；变更见 `CHANGELOG.md`）
 - **许可证**：GPL-3.0-only（全文见 `LICENSE`，GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007）
 - **安装位置**：`~/.workbuddy/skills/gongwen-bizheng/`（用户级技能；技能目录属系统约定路径）
 - **上游**：`github.com/SuiJQ/gongwen-bizheng`。v0.2.1 于 2026-11-15 导入（13 个文件经 git blob SHA-1 校验）；v0.4.2 已于同日推送至 `main`（commit `d3c6009`，31 文件，git blob SHA-1 与本地逐文件一致）
@@ -25,12 +25,24 @@ references/
   07-review.md                 审核清单与错误库（权威）
   08-memory.md                 记忆协议（第十二节：主文件记忆协议）
   09-cases.md                  好差对照与边界案例
-  10-degradation.md            10 种能力缺失的降级行为
+  10-degradation.md            11 种能力缺失的降级行为
+  11-vocab.md                  机关动宾搭配与六字对（v0.4.3 新增，按需查）
+  12-redlines.md               政治与合规红线（v0.5.0 新增，按需查）
+  13-experience.md             记忆梦境：经验提炼协议（v0.6.0 新增）
 scripts/
   check_format.js              文本层格式／占位符机检（零第三方依赖）
   export_docx.js               净稿导出 DOCX（零第三方依赖）
   format_docx.js               版式修复／元数据清理／只读诊断入口（零第三方依赖）
   docformat/                   版式能力实现，12 个模块（zip、docpkg、xml、detect、ppr、format、structure、clean、meta、diagnose、preset、index）
+tests/
+  docformat_test.js            版式能力回归（36 项）
+  robustness_test.js           畸形输入与健壮性回归（11 项，v0.5.0 新增）
+package.json                   脚本层入口：npm test；engines node>=18
+.gitignore                     排除 experience/E-*.md，防止本地经验条目误提交
+experience/                    本地经验库（v0.6.0 新增）
+  README.md                    使用说明与警示
+  INDEX.md                     经验索引（初始为空表）
+  E-NNN-*.md                   实际经验条目（运行时生成，不入基线、不入 git；须平铺一层且含七项字段，否则验收判不合格）
 ```
 
 > `SKILL.md` 第 0 节「规则卡」即 v0.2.1「硬约束」8 条的表格化改写，是这 8 条规则在当前包内的唯一权威出处；出处列中的编号指原条目，不再对应文件内独立章节。第 9–10 条为前置的格式硬规则，第 11 条（排版建议）为 v0.4.0 新增、v0.4.1 起出处指向 `00-stages.md` S5 动作 5。
@@ -79,9 +91,31 @@ node scripts/format_docx.js smart <来文.docx> <出.docx> --author 张三 --for
 
 **已知边界**：不处理 `.doc`/`.wps`（需 Office/WPS 的 COM）；不做版头、版记、印章；不做修订痕迹与表格智能对齐。机检覆盖页边距、字体字号、行距、缩进对齐、结构空行、要素齐全、文字层序数与日期、文档属性痕迹；**不覆盖页码、印章、版头与版记**，这几项须人工核对或记降级。
 
-**读取侧防护（v0.4.2 起）**：逐条目校验 CRC-32（不匹配即报错，不再静默解出错误内容）；单条目解压上限 256 MB；ZIP64 格式显式拒绝并提示另存。输出路径与输入文件相同时一律拒绝（含 `--force`），不做原地覆盖。
+**读取侧防护（v0.4.2 起）**：逐条目校验 CRC-32（不匹配即报错，不再静默解出错误内容）；单条目解压上限 256 MB；ZIP64 格式显式拒绝并提示另存。输出路径与输入文件相同时一律拒绝（含 `--force`），不做原地覆盖。`check_format.js` 自 v0.4.4 起与 `format_docx.js` 共用同一读取器，不再各写一套。
+
+**OOXML 覆盖度声明**：脚本按片段正则处理 OOXML，不做完整 DOM 解析。已支持正文段落、表格、图片与媒体部件、分节符、自动编号、样式引用、制表位、域代码；**不支持**嵌套同名 `<w:p>`（部分表格特殊结构）、文本框内段落重排、修订痕迹合并、CDATA 内文本识别。不支持的构造以「不崩溃且输出良构」为底线，语义保真须人工核对。
+
+**运行时要求**：Node >= 18（`package.json` 的 `engines` 已声明）。低于该版本可能在解压参数与正则特性上静默降级。
 
 **与同类项目的关系**：版式参数取自 GB/T 9704-2012 与公文排版通例。实现参考了 `KaguraNanaga/docformat-gui` 的功能取舍，但**未复制其 v1.8.8.3+（PolyForm Noncommercial）代码、注释或常量表**，为独立重写，故本包不含该许可的衍生作品。该项目的 MIT 版本（`document-format-skills`）与本包思路相近，此处一并致谢。
+
+## 记忆梦境（v0.6.0 新增）
+
+写完之后不立刻收工：回看「草稿 → 终稿」的全部改动，把可复用的判断提炼成经验条目，长期抬高这个技能的水平。
+
+```
+每次交付完成（S6 之前，固定动作）
+  → 回看改动：这次哪里改得最多、为什么
+  → 通用性四问：可脱离本篇？可判定？非孤例？有出处？
+  → 四问全过 → 写入 experience/E-NNN-主题.md + INDEX.md 加索引
+  → 任一不过 → 只进本次《注意事项》，写明哪一问未过
+```
+
+**门槛与拒收**：四问全「是」才入库；具体数据、单位名、人名、一次性偏好、涉密信息、无判据的「感觉」一律不收（见 `references/13-experience.md` 三、四节）。
+
+**晋升**：复现 2 次升「高」并合并；复现 3 次以上且与国标一致，**提请**用户同意后才写入 `references/`；12 个月未复现标「待复核」。经验库不得覆盖硬规则，冲突时以 `07-review.md` 为准。
+
+> ⚠️ **`experience/` 是你个人的本地资产，不属于技能包**：不进 git、不进 `release-*` 快照、不随技能分发。**重装或覆盖升级前请先备份该目录**，否则升级会连同技能目录一起替换。
 
 ## 与其他公文类技能的边界（来源标注）
 
@@ -111,7 +145,7 @@ v0.2.1 全包检索未检出对上述技能或资料包的引用、致谢；自 
 
 ## 版本字段说明
 
-内置 `skill-creator/SKILL.md:34-36` 规定 frontmatter 必需字段仅 `name` 与 `description`；平台对 `metadata.version` 的识别规则**未检出**。本机已验证含 `license`／`metadata` 的本技能可正常加载，故保留该字段并随版本推进（当前 0.4.2），同时在本文件写明版本；不臆造顶层 `version` 字段。
+内置 `skill-creator/SKILL.md:34-36` 规定 frontmatter 必需字段仅 `name` 与 `description`；平台对 `metadata.version` 的识别规则**未检出**。本机已验证含 `license`／`metadata` 的本技能可正常加载，故保留该字段并随版本推进（当前 0.6.2），同时在本文件写明版本；不臆造顶层 `version` 字段。
 
 ## 回归与回滚
 
@@ -120,9 +154,14 @@ v0.2.1 全包检索未检出对上述技能或资料包的引用、致谢；自 
 - v0.4.0 基线：`baseline-v0.4.0.json`（31 文件 SHA-256）；整包快照 `release-v0.4.0/`
 - v0.4.1 基线：`baseline-v0.4.1.json`（31 文件 SHA-256）；整包快照 `release-v0.4.1/`
 - v0.4.2 基线：`baseline-v0.4.2.json`（31 文件 SHA-256）；整包快照 `release-v0.4.2/`
-- 验收脚本：`tools/verify.py`（v0.4.2 为 89 项，含 4 个影子任务走查、导出产物自检回归、两条路径页脚一致性回归）；缺陷与观察项闭合核验 `tools/verify_issues.py`（22 条，覆盖 v0.4.1 的 P1/P2 与 v0.4.2 的观察项）；其余工具 `tools/` 下可复跑
-- 功能回归：`D:/SuiJQ/WorkBuddy/数据/gongwen-bizheng/tests/functional_test.py` 用真实公文样例端到端验证三个脚本（开发目录，未随包分发）；`tests/docformat_test.js` 为版式能力的 27 项纯 Node 回归（zip 往返、版式属性、元数据清理、幂等、诊断、边界、表格保真、图片与媒体部件保真、CRC 校验、ZIP64 拒绝、同路径拒绝）
+- v0.4.3 基线：`baseline-v0.4.3.json`（32 文件 SHA-256，新增 `references/11-vocab.md`）；整包快照 `release-v0.4.3/`
+- v0.5.0 基线：`baseline-v0.5.0.json`（35 文件 SHA-256，新增 `references/12-redlines.md`、`package.json`、`tests/robustness_test.js`）；整包快照 `release-v0.5.0/`
+- v0.6.0 基线：`baseline-v0.6.0.json`（38 文件 SHA-256，新增 `references/13-experience.md`、`experience/README.md`、`experience/INDEX.md`）；整包快照 `release-v0.6.0/`
+- v0.6.1 基线：`baseline-v0.6.1.json`（38 文件 SHA-256，修复 4 项新引入缺陷，未增删文件）；整包快照 `release-v0.6.1/`
+- v0.6.2 基线：`baseline-v0.6.2.json`（38 文件 SHA-256，P2 技术债清理，未增删文件）；整包快照 `release-v0.6.2/`
+- 验收脚本：`tools/verify.py`（v0.6.2 为 105 项，含 4 个影子任务走查、导出产物自检回归、两条路径页脚一致性回归、版式与健壮性两套回归、资源索引覆盖全部 14 个子文件；另有断言校验 pPr 子元素顺序符合 CT_PPrBase、package.json 版本与 frontmatter 一致、CHANGELOG 版本段唯一、experience/ 无越界文件且条目含七项字段、.gitignore 排除本地经验条目）；缺陷与观察项闭合核验 `tools/verify_issues.py`（22 条）；其余工具 `tools/` 下可复跑
+- 功能回归：`D:/SuiJQ/WorkBuddy/数据/gongwen-bizheng/tests/functional_test.py` 用真实公文样例端到端验证三个脚本（开发目录，未随包分发）；`tests/docformat_test.js` 为版式能力的 36 项纯 Node 回归（zip 往返、版式属性、元数据清理、幂等、诊断、边界、表格保真、图片与媒体部件保真、CRC 校验、ZIP64 拒绝、同路径拒绝、多节分节符保真、自动编号与样式引用保真、属性含 `>` 的 pPr 幂等、2000 段性能基线、多节页码引用、PAGE 域精确删除、三脚本退出码一致）
 
-回滚：以对应快照整包覆盖安装目录，并按相应 `baseline-*.json` 校验文件数与 SHA-256；回滚到 v0.4.1 时需还原 `zip.js`・`docpkg.js`（读取校验）与 `index.js`（同路径保护），并撤回 `tests/docformat_test.js` 的 6 项新用例；回滚到 v0.4.0 时另需还原 `scripts/export_docx.js` 并撤销 `preset.js`・`format.js` 的页脚与 sectPr 修正；回滚到 v0.3.0 时再移除 `scripts/format_docx.js` 与 `scripts/docformat/`（14 个文件）。触发条件：影子任务任一阶段缺失、脚本退出码异常、路径引用断链，或判定证据／确认点／降级纪律被削弱。
+回滚：以对应快照整包覆盖安装目录，并按相应 `baseline-*.json` 校验文件数与 SHA-256；回滚到 v0.4.2 时需**删除 `references/11-vocab.md`**（文件数 32 → 31）并还原 `SKILL.md`・`06-language.md`・`07-review.md` 的索引与判据行；回滚到 v0.4.1 时另需还原 `zip.js`・`docpkg.js`（读取校验）与 `index.js`（同路径保护），并撤回 `tests/docformat_test.js` 的 6 项新用例；回滚到 v0.4.0 时另需还原 `scripts/export_docx.js` 并撤销 `preset.js`・`format.js` 的页脚与 sectPr 修正；回滚到 v0.3.0 时再移除 `scripts/format_docx.js` 与 `scripts/docformat/`（14 个文件）。触发条件：影子任务任一阶段缺失、脚本退出码异常、路径引用断链，或判定证据／确认点／降级纪律被削弱。
 
 > 说明：`check_format.js` 的验收基线是**对技能文档自身**扫描的结果（v0.3.0 为 20 项），命中项全部是规则示例文本（`DOC_TYPE_MIX`、`PLACEHOLDER`、`THEME_WORD` 等），不代表文档缺陷；该脚本的正常用途是检查公文正文。

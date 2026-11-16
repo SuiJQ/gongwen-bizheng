@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { DocxPackage } = require('./docpkg');
 const { getPreset, mergePreset } = require('./preset');
-const { applyPage, formatParagraphs } = require('./format');
+const { applyPage, formatParagraphs, stripPageNumberParagraphs } = require('./format');
 const { applyStructuralBlanks, splitHeadings, protectMediaParagraphs } = require('./structure');
 const { normalizeDates, cleanStyles, documentStats } = require('./clean');
 const { cleanMetadata } = require('./meta');
@@ -145,4 +145,5 @@ function analyzeFile(inputPath, options) {
 module.exports = {
   processFile, cleanMetadataFile, analyzeFile, formatDocument,
   DEFAULT_RUN_OPTIONS, openPackage, resolvePreset, assertDistinctPaths,
+  stripPageNumberParagraphs,
 };

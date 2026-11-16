@@ -452,6 +452,131 @@ test('拒绝输出路径与输入相同', () => {
   assert.throws(() => api.cleanMetadataFile(SRC, SRC, { force: true }), /相同/);
 });
 
+// ------------------------------------------------ 结构保真与健壮性（v0.4.4 新增）
+function buildStructuredFixture(file) {
+  const numPara = '<w:p><w:pPr><w:pStyle w:val="ListParagraph"/>' +
+    '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>' +
+    '<w:tabs><w:tab w:val="left" w:pos="420"/></w:tabs></w:pPr>' +
+    '<w:r><w:t>一、检查范围</w:t></w:r></w:p>';
+  // 段落级分节符：多节文档靠它分节，丢了就塌成一节、页码失效
+  const sectPara = '<w:p><w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/>' +
+    '<w:pgMar w:top="1440" w:right="1800" w:bottom="1440" w:left="1800" ' +
+    'w:header="851" w:footer="992" w:gutter="0"/></w:sectPr></w:pPr>' +
+    '<w:r><w:t>第一节末段。</w:t></w:r></w:p>';
+  const body = [
+    p('关于开展专项检查的通知', { font: '宋体', size: 32 }),
+    p('各区县应急管理局：', { font: '微软雅黑', size: 21 }),
+    numPara,
+    p('现就有关事项通知如下。', { font: '微软雅黑', size: 21 }),
+    sectPara,
+    p('特此通知。', { font: '微软雅黑', size: 21 }),
+    p('XX市应急管理局', { font: '微软雅黑', size: 21, align: 'right' }),
+    p('2026年11月5日', { font: '微软雅黑', size: 21, align: 'right' }),
+  ].join('');
+  return buildMinimalPackage(file, body, {});
+}
+
+function buildManyParagraphsFixture(file, count) {
+  const rows = [];
+  for (let i = 0; i < count; i += 1) {
+    rows.push(p('第' + (i + 1) + '段正文内容，用于性能基线测试，含若干中文字符与标点。',
+      { font: '微软雅黑', size: 21 }));
+  }
+  return buildMinimalPackage(file, rows.join(''), {});
+}
+
+test('多节文档的分节符不被丢弃', () => {
+  const srcS = buildStructuredFixture(path.join(TMP, 'sections.docx'));
+  const outS = path.join(TMP, 'sections-fixed.docx');
+  api.processFile(srcS, outS, { force: true });
+  const before = (open(srcS).getText('word/document.xml').match(/<w:sectPr\b/g) || []).length;
+  const after = (open(outS).getText('word/document.xml').match(/<w:sectPr\b/g) || []).length;
+  assert.strictEqual(after, before, '分节符数量变化：' + before + ' -> ' + after);
+  assert.ok(after >= 2, '应保留段落级与正文级两个 sectPr，实际 ' + after);
+});
+
+test('自动编号、样式引用与制表位不被丢弃', () => {
+  const doc = open(path.join(TMP, 'sections-fixed.docx')).getText('word/document.xml');
+  assert.ok(/<w:numPr\b/.test(doc), '自动编号 numPr 丢失');
+  assert.ok(/<w:numId\b/.test(doc), '编号 ID 丢失');
+  assert.ok(/<w:pStyle\b/.test(doc), '样式引用 pStyle 丢失');
+  assert.ok(/<w:tabs\b/.test(doc), '制表位 tabs 丢失');
+});
+
+test('属性含 ">" 时 pPr 不被重复插入', () => {
+  const para = '<w:p><w:pPr w:val="x>y"><w:jc w:val="both"/></w:pPr>' +
+    '<w:r><w:t>正文</w:t></w:r></w:p>';
+  const out = xml.replacePPr(para, '<w:pPr><w:spacing w:line="560"/></w:pPr>');
+  assert.strictEqual((out.match(/<w:pPr\b/g) || []).length, 1, '出现多个 pPr：' + out);
+  assert.ok(out.includes('<w:spacing'), '新 pPr 未写入');
+});
+
+test('mergePPr 保留结构性兄弟元素并保持顺序', () => {
+  const oldPPr = '<w:pPr><w:pStyle w:val="A"/><w:numPr><w:numId w:val="2"/></w:numPr>' +
+    '<w:spacing w:line="240"/><w:ind w:firstLine="100"/></w:pPr>';
+  const newPPr = '<w:pPr><w:widowControl/><w:spacing w:line="560"/><w:ind w:firstLine="640"/>' +
+    '<w:jc w:val="both"/></w:pPr>';
+  const merged = xml.mergePPr(oldPPr, newPPr);
+  assert.ok(merged.includes('<w:pStyle w:val="A"/>'), 'pStyle 未保留');
+  assert.ok(merged.includes('<w:numPr>'), 'numPr 未保留');
+  assert.ok(merged.includes('w:line="560"'), '新版式未生效');
+  assert.ok(merged.indexOf('<w:pStyle') < merged.indexOf('<w:numPr'), 'pStyle 应在 numPr 之前');
+  assert.ok(merged.indexOf('<w:numPr') < merged.indexOf('<w:spacing'), 'numPr 应在 spacing 之前');
+});
+
+test('CRC 损坏的 docx 在 check_format 侧同样被拒（不再是两套读取器）', () => {
+  const buf = fs.readFileSync(SRC);
+  const cd = buf.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+  const bad = Buffer.from(buf);
+  bad.writeUInt32LE(0xdeadbeef, cd + 16);
+  const badFile = path.join(TMP, 'badcrc.docx');
+  fs.writeFileSync(badFile, bad);
+  const r = require('child_process').spawnSync(process.execPath,
+    [path.join(__dirname, '..', 'scripts', 'check_format.js'), badFile], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 2, '损坏件应返回 2，实际 ' + r.status);
+  assert.ok(/CRC/i.test(r.stderr + r.stdout), '应提示 CRC，实际：' + (r.stderr || r.stdout).slice(0, 120));
+});
+
+test('2000 段文档处理在 5 秒内（性能基线）', () => {
+  const big = buildManyParagraphsFixture(path.join(TMP, 'big.docx'), 2000);
+  const t0 = Date.now();
+  api.processFile(big, path.join(TMP, 'big-fixed.docx'), { force: true });
+  const ms = Date.now() - t0;
+  assert.ok(ms < 5000, '2000 段耗时 ' + ms + 'ms，超过 5s 基线');
+});
+
+// ------------------------------------------- P2 遗留项回归（v0.6.2 新增）
+test('多节文档每一节都挂页码引用', () => {
+  const srcS = buildStructuredFixture(path.join(TMP, 'msec.docx'));
+  const outS = path.join(TMP, 'msec-fixed.docx');
+  api.processFile(srcS, outS, { force: true });
+  const sects = open(outS).getText('word/document.xml').match(/<w:sectPr[\s\S]*?<\/w:sectPr>/g) || [];
+  assert.ok(sects.length >= 2, 'sectPr 数量异常：' + sects.length);
+  sects.forEach((s, i) => {
+    const n = (s.match(/<w:footerReference\b/g) || []).length;
+    assert.ok(n >= 1, '第 ' + (i + 1) + ' 节无 footerReference，页码会缺失');
+  });
+});
+
+test('stripPageNumberParagraphs 只删含 PAGE 域的段落', () => {
+  const ftr = '<w:ftr><w:p><w:r><w:t>本页标注 PAGE 字样但无域</w:t></w:r></w:p>' +
+    '<w:p><w:r><w:instrText> PAGE </w:instrText></w:r></w:p></w:ftr>';
+  const out = api.stripPageNumberParagraphs(ftr);
+  assert.ok(out.includes('本页标注 PAGE 字样但无域'), '误删了仅含 PAGE 字样的段落');
+  assert.ok(!out.includes('instrText'), '未删除真正的 PAGE 域段落');
+});
+
+test('三个脚本无参调用退出码一致为 2，--help 为 0', () => {
+  const { spawnSync } = require('child_process');
+  const root = path.join(__dirname, '..', 'scripts');
+  ['check_format.js', 'export_docx.js', 'format_docx.js'].forEach((f) => {
+    const noArg = spawnSync(process.execPath, [path.join(root, f)], { encoding: 'utf8' });
+    assert.strictEqual(noArg.status, 2, f + ' 无参应为 2，实际 ' + noArg.status);
+    const help = spawnSync(process.execPath, [path.join(root, f), '--help'], { encoding: 'utf8' });
+    assert.strictEqual(help.status, 0, f + ' --help 应为 0，实际 ' + help.status);
+  });
+});
+
 // ------------------------------------------------------------------ 汇总
 console.log('\n' + '='.repeat(56));
 console.log('版式能力回归：通过 ' + passed + ' / 失败 ' + failed);

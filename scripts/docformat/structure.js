@@ -26,7 +26,6 @@ function detectAll(paras, preset) {
       align: getJc(para.xml),
       hasMedia: hasMedia(para.xml),
       firstNameIndex: first,
-      prevType: i > 0 ? types[i - 1] : null,
     }));
   });
   return { texts, types: refineTypes(types, texts) };

@@ -5,7 +5,7 @@
 'use strict';
 
 const {
-  scanParagraphs, paragraphText, getJc, hasMedia, hasPageBreak,
+  scanParagraphs, paragraphText, getJc, hasMedia,
   replacePPr, el, escapeAttr, XML_DECL,
 } = require('./xml');
 const { detectType, refineTypes } = require('./detect');
@@ -91,9 +91,16 @@ function buildFooterXml(pn, align) {
     '<w:p>' + pPr + runs.join('') + '</w:p></w:ftr>';
 }
 
-/** 去掉页脚里的页码域段落（用于替换） */
+/**
+ * 去掉页脚里的页码域段落（用于替换）。
+ * 判据必须是「含 PAGE 域」而非「含 PAGE 字样」——后者会误删写明"PAGE 1 of 3"
+ * 或正文含 PAGE 字样的页脚段落（v0.6.1 及以前的缺陷）。
+ */
 function stripPageNumberParagraphs(footerXml) {
-  return footerXml.replace(/<w:p\b[\s\S]*?<\/w:p>/g, (p) => (/PAGE/.test(p) ? '' : p));
+  return footerXml.replace(/<w:p\b[\s\S]*?<\/w:p>/g, (p) => {
+    const hasField = /<w:instrText[^>]*>\s*PAGE\b/.test(p) || /<w:fldSimple[^>]*w:instr="\s*PAGE\b/.test(p);
+    return hasField ? '' : p;
+  });
 }
 
 /**
@@ -162,13 +169,11 @@ function applyPage(pkg, preset, options) {
   }
 
   // ---- 修改所有 sectPr ----
-  let footerPatched = false;
+  // 页码引用必须挂到**每一个** sectPr 上：只挂首个会导致第 2 节起无页码
+  // （v0.6.1 及以前用 footerPatched 标志只打第一处，多节文档后续页面丢页码）。
   doc = doc.replace(/<w:sectPr\b[^>]*\/>|<w:sectPr\b[^>]*>[\s\S]*?<\/w:sectPr>/g, (sect) => {
     let out = patchSectPrGeometry(sect, page);
-    if (pn.enabled && !footerPatched) {
-      out = patchSectPrFooters(out, footerRefs);
-      footerPatched = true;
-    }
+    if (pn.enabled) out = patchSectPrFooters(out, footerRefs);
     return out;
   });
   pkg.setText(mainName, doc);
@@ -208,14 +213,11 @@ function formatParagraphs(pkg, preset, options) {
   bodyParas.forEach((para, i) => {
     types.push(detectType({
       text: texts[i],
-      rawText: paragraphText(para.xml),
       index: i,
       total: bodyParas.length,
       align: getJc(para.xml),
       hasMedia: hasMedia(para.xml),
-      hasPageBreak: hasPageBreak(para.xml),
       firstNameIndex: firstNonEmpty,
-      prevType: i > 0 ? types[i - 1] : null,
     }));
   });
   const refined = refineTypes(types, texts);
@@ -263,13 +265,16 @@ function formatParagraphs(pkg, preset, options) {
     if (styles) pkg.setText(stylesName, stripStyleAutospacing(styles));
   }
 
-  // 从后往前替换，避免偏移错乱
-  let out = doc;
-  replacements.sort((a, b) => b.start - a.start);
+  // 单次遍历拼装：逐次 slice 重拼是 O(n²)，大文件会到分钟级
+  replacements.sort((a, b) => a.start - b.start);
+  const chunks = [];
+  let cursor = 0;
   for (const r of replacements) {
-    out = out.slice(0, r.start) + r.xml + out.slice(r.end);
+    chunks.push(doc.slice(cursor, r.start), r.xml);
+    cursor = r.end;
   }
-  pkg.setText(mainName, out);
+  chunks.push(doc.slice(cursor));
+  pkg.setText(mainName, chunks.join(''));
 
   // 表格内段落：只统一字体字号，不改对齐与缩进（单元格排版自成体系）
   const tableFixed = formatTableCells(pkg, preset, opts);
@@ -294,8 +299,7 @@ function formatTableCells(pkg, preset, opts) {
 
   const body = preset.types.body;
   let count = 0;
-  let out = doc;
-  cells.sort((a, b) => b.start - a.start);
+  const patches = [];
   for (const cell of cells) {
     const text = paragraphText(cell.xml).trim();
     if (!text) continue;
@@ -308,11 +312,21 @@ function formatTableCells(pkg, preset, opts) {
       fontEn: body.fontEn,
     }, { bold: false, preserveMedia: true });
     if (withFont !== cell.xml) {
-      out = out.slice(0, cell.start) + withFont + out.slice(cell.end);
+      patches.push({ start: cell.start, end: cell.end, xml: withFont });
       count += 1;
     }
   }
-  if (count) pkg.setText(mainName, out);
+  if (count) {
+    patches.sort((a, b) => a.start - b.start);
+    const chunks = [];
+    let cursor = 0;
+    for (const p of patches) {
+      chunks.push(doc.slice(cursor, p.start), p.xml);
+      cursor = p.end;
+    }
+    chunks.push(doc.slice(cursor));
+    pkg.setText(mainName, chunks.join(''));
+  }
   return count;
 }
 

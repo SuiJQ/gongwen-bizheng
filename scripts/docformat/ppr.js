@@ -122,7 +122,12 @@ function applyRunFormat(pXml, fmt, opts) {
   });
 }
 
-/** 深度清洗：清除 run 上的颜色/下划线/斜体/底纹/高亮，段落上的底纹 */
+/**
+ * 深度清洗：清除 run 上的颜色/下划线/斜体/底纹/高亮，段落上的底纹与边框。
+ *
+ * 不删 pStyle / numPr：pStyle 是样式引用、numPr 是自动编号，属**结构**而非"外观格式"。
+ * v0.6.0 曾在此处删掉二者，导致 --deep-clean 路径下 mergePPr 无源可保、编号消失。
+ */
 function stripFormatting(pXml) {
   let out = pXml;
   out = out.replace(/<w:rPr\b[\s\S]*?<\/w:rPr>/g, (rPr) => {
@@ -141,8 +146,6 @@ function stripFormatting(pXml) {
   out = out.replace(/<w:pPr\b[\s\S]*?<\/w:pPr>/g, (pPr) => pPr
     .replace(/<w:shd\b[^>]*\/>/g, '')
     .replace(/<w:pBdr\b[\s\S]*?<\/w:pBdr>/g, '')
-    .replace(/<w:pStyle[^>]*\/>/g, '')
-    .replace(/<w:numPr\b[\s\S]*?<\/w:numPr>/g, '')
     .replace(/<w:snapToGrid[^>]*\/>/g, ''));
   return out;
 }

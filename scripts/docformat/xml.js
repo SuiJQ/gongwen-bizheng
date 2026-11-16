@@ -120,14 +120,31 @@ function hasPageBreak(pXml) {
   return /<w:br[^>]*w:type="page"/.test(pXml);
 }
 
+/** 引号感知地找标签结束的 '>'：属性值里含 '>' 时不会提前截断 */
+function findTagEnd(xml, start) {
+  let quote = null;
+  for (let i = start; i < xml.length; i += 1) {
+    const c = xml[i];
+    if (quote) {
+      if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+    } else if (c === '>') {
+      return i;
+    }
+  }
+  return -1;
+}
+
 /** 取段落属性块（w:pPr）的完整 XML；没有则返回空串 */
 function getPPr(pXml) {
   const open = pXml.indexOf('<w:pPr');
   if (open < 0) return '';
+  const end = findTagEnd(pXml, open);
+  if (end < 0) return '';
   // 自闭合
-  const afterOpen = pXml.indexOf('>', open);
-  if (pXml[afterOpen - 1] === '/') return pXml.slice(open, afterOpen + 1);
-  const close = pXml.indexOf('</w:pPr>', open);
+  if (pXml[end - 1] === '/') return pXml.slice(open, end + 1);
+  const close = pXml.indexOf('</w:pPr>', end);
   if (close < 0) return '';
   return pXml.slice(open, close + '</w:pPr>'.length);
 }
@@ -173,22 +190,92 @@ function getFirstRunSize(pXml) {
   return sz ? Number(sz[1]) : null;
 }
 
-/** 用新的 pPr 替换段落原有 pPr（无则插入到段落开头标签之后） */
+/**
+ * 合并 pPr：以新的版式属性为主，保留旧 pPr 中**结构性子元素**。
+ *
+ * 必须保留：pStyle（样式引用）、framePr（文本框定位）、numPr（自动编号）、
+ * tabs（制表位）、sectPr（段落级分节符）。
+ * 丢掉 numPr 会让自动编号消失——那是改了内容外观，违反「只改版式」；
+ * 丢掉段落级 sectPr 会让多节文档塌成一节、页码全部失效。
+ */
+const PPR_PROTECTED = ['w:pStyle', 'w:framePr', 'w:numPr', 'w:tabs', 'w:sectPr'];
+
+/**
+ * CT_PPrBase 的 schema 序号（wordprocessingml.xsd 的 xs:sequence 顺序）。
+ * 插入位置一律按本表定位，不得用"锚点元素列表"近似——v0.6.0 曾用锚点表，
+ * 导致 numPr/tabs 落到 autoSpaceDE/DN 之后，违反 schema，Word 会提示"需要修复"。
+ */
+const PPR_SEQ = [
+  'w:pStyle', 'w:keepNext', 'w:keepLines', 'w:pageBreakBefore', 'w:framePr',
+  'w:widowControl', 'w:numPr', 'w:pBdr', 'w:shd', 'w:tabs',
+  'w:suppressAutoHyphens', 'w:kinsoku', 'w:wordWrap', 'w:overflowPunct',
+  'w:topLinePunct', 'w:autoSpaceDE', 'w:autoSpaceDN', 'w:bidi',
+  'w:adjustRightInd', 'w:snapToGrid', 'w:spacing', 'w:ind', 'w:contextualSpacing',
+  'w:mirrorIndents', 'w:suppressOverlap', 'w:jc', 'w:textDirection',
+  'w:textAlignment', 'w:textboxTightWrap', 'w:outlineLvl', 'w:divId',
+  'w:cnfStyle', 'w:rPr', 'w:sectPr', 'w:pPrChange',
+];
+
+/** 取 pPr 文本中某个子元素（入参是 pPr，不是整段） */
+function pPrChildOf(pPrText, name) {
+  const re = new RegExp('<' + name + '\\b[^>]*/>|<' + name + '\\b[^>]*>[\\s\\S]*?</' + name + '>');
+  const m = re.exec(pPrText || '');
+  return m ? m[0] : '';
+}
+
+/** 列出 pPr 里已出现的直接子元素名（按 schema 表过滤，避免误匹配嵌套子孙） */
+function pPrChildNames(pPr) {
+  const found = [];
+  PPR_SEQ.forEach((n) => {
+    if (new RegExp('<' + n + '[\\s/>]').test(pPr)) found.push(n);
+  });
+  return found;
+}
+
+/** 按 schema 顺序把子元素插进 pPr：插到第一个"位次更大"的已有子元素之前 */
+function insertPPrChild(pPr, name, child) {
+  const seqIdx = PPR_SEQ.indexOf(name);
+  if (seqIdx < 0) return pPr.replace('</w:pPr>', child + '</w:pPr>');
+  const present = pPrChildNames(pPr);
+  for (const n of present) {
+    if (PPR_SEQ.indexOf(n) > seqIdx) {
+      const i = pPr.indexOf('<' + n);
+      if (i >= 0) return pPr.slice(0, i) + child + pPr.slice(i);
+    }
+  }
+  return pPr.replace('</w:pPr>', child + '</w:pPr>');
+}
+
+function mergePPr(oldPPr, newPPr) {
+  if (!oldPPr) return newPPr;
+  let merged = newPPr;
+  PPR_PROTECTED.forEach((name) => {
+    const child = pPrChildOf(oldPPr, name);
+    if (!child) return;
+    if (pPrChildOf(merged, name)) return;
+    merged = insertPPrChild(merged, name, child);
+  });
+  return merged;
+}
+
+/** 用新的 pPr 替换段落原有 pPr（保留结构性兄弟元素；无 pPr 则插入到段落开头标签之后） */
 function replacePPr(pXml, newPPr) {
   const old = getPPr(pXml);
+  const merged = mergePPr(old, newPPr);
   if (old) {
     const idx = pXml.indexOf(old);
-    return pXml.slice(0, idx) + newPPr + pXml.slice(idx + old.length);
+    return pXml.slice(0, idx) + merged + pXml.slice(idx + old.length);
   }
   const openMatch = /^<w:p(?:\s[^>]*)?>/.exec(pXml);
   if (!openMatch) return pXml;
-  return openMatch[0] + newPPr + pXml.slice(openMatch[0].length);
+  return openMatch[0] + merged + pXml.slice(openMatch[0].length);
 }
 
-/** 取段落的 open 标签（<w:p ...>） */
+/** 取段落的 open 标签（<w:p ...>），引号感知 */
 function paragraphOpenTag(pXml) {
-  const m = /^<w:p(?:\s[^>]*)?>/.exec(pXml);
-  return m ? m[0] : '<w:p>';
+  const end = findTagEnd(pXml, 0);
+  if (end < 0 || pXml.indexOf('<w:p') !== 0) return '<w:p>';
+  return pXml.slice(0, end + 1);
 }
 
 /** 取段落 pPr 中某个子元素 XML */
@@ -212,8 +299,17 @@ function el(name, attrs) {
   return '<' + name + parts.join('') + '/>';
 }
 
+/** 取 <tag>…</tag> 或 <tag/> 的文本内容（不含标签自身）；无此标签返回 null */
+function readTag(xml, tag) {
+  const re = new RegExp('<' + tag + '(?:\\s[^>]*)?>([\\s\\S]*?)</' + tag + '>|<' + tag + '(?:\\s[^>]*)?/>');
+  const m = re.exec(xml || '');
+  if (!m) return null;
+  return m[1] === undefined ? '' : unescapeXml(m[1]);
+}
+
 module.exports = {
   XML_DECL,
+  readTag,
   escapeText,
   escapeAttr,
   unescapeXml,
@@ -226,6 +322,10 @@ module.exports = {
   getPPrChild,
   removePPrChild,
   replacePPr,
+  mergePPr,
+  findTagEnd,
+  PPR_SEQ,
+  pPrChildNames,
   paragraphOpenTag,
   getJc,
   getFirstLineIndent,

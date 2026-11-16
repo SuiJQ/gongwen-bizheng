@@ -161,9 +161,14 @@ function printReport(report) {
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (args.help || (!args.mode && process.argv.length <= 2)) {
+  // --help/-h 显式请求帮助返回 0；无参调用属"缺参数"，与另两个脚本统一返回 2
+  if (args.help) {
     process.stdout.write(HELP);
     return 0;
+  }
+  if (!args.mode && process.argv.length <= 2) {
+    process.stderr.write(HELP);
+    return 2;
   }
   if (args.errors.length) {
     process.stderr.write(args.errors.join('\n') + '\n');

@@ -9,19 +9,14 @@
 
 const {
   scanParagraphs, paragraphText, getJc, getPPr, getFirstLineIndent,
-  getLineSpacing, getFirstRunFont, getFirstRunSize, hasMedia, unescapeXml,
+  getLineSpacing, getFirstRunFont, getFirstRunSize, hasMedia, unescapeXml, readTag,
 } = require('./xml');
 const { detectType, refineTypes } = require('./detect');
 const { isGeneratorValue, CORE_PART, APP_PART } = require('./meta');
 
 const CM_TOLERANCE = 0.2;
 
-function readTag(xml, tag) {
-  const re = new RegExp('<' + tag + '(?:\\s[^>]*)?>([\\s\\S]*?)</' + tag + '>|<' + tag + '(?:\\s[^>]*)?/>');
-  const m = re.exec(xml || '');
-  if (!m) return null;
-  return m[1] === undefined ? '' : unescapeXml(m[1]);
-}
+
 
 /** 取段落有效字体：优先首个 run 的显式设置，其次 pPr 内的 rPr */
 function effectiveFormat(pXml) {
@@ -99,7 +94,6 @@ function diagnoseParagraphs(pkg, preset, issues) {
       align: getJc(para.xml),
       hasMedia: hasMedia(para.xml),
       firstNameIndex: first,
-      prevType: i > 0 ? types[i - 1] : null,
     });
     types.push(type);
     const eff = effectiveFormat(para.xml);
@@ -296,7 +290,6 @@ function diagnoseText(rows, issues) {
 function diagnoseMetadata(pkg, issues) {
   const core = pkg.getText(CORE_PART);
   const app = pkg.getText(APP_PART);
-  const found = [];
   if (!core) {
     issues.push({
       code: 'META_NO_CORE', level: 'warn', category: 'metadata',
@@ -348,7 +341,6 @@ function diagnoseMetadata(pkg, issues) {
       message: '正文含 ' + rsidCount + ' 处 rsid 属性' + (listCount ? '，settings 内登记 ' + listCount + ' 条会话' : ''),
     });
   }
-  return found;
 }
 
 /**
