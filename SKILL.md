@@ -4,7 +4,7 @@ description: 当用户起草、修改、审核、补写或规范化中文公文�
 license: GPL-3.0-only
 agent_created: true
 metadata:
-  version: "0.7.2"
+  version: "0.7.3"
 ---
 
 # 公文笔正
