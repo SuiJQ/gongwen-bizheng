@@ -150,10 +150,21 @@ function main() {
     return 2;
   }
 
-  const paragraphs = linesToParagraphs(text.split(/\r?\n/));
+  const rawLines = text.split(/\r?\n/);
+  const paragraphs = linesToParagraphs(rawLines);
   if (!paragraphs.length) {
     process.stderr.write('输入为空，未生成文件。\n');
     return 2;
+  }
+
+  // Markdown 表格无法转成 OOXML 表格：管线只处理段落，表格会退化成一行带竖线的正文。
+  // v0.6.2 及以前静默降级且 analyze 仍判 pass，等于「字没丢、形态全毁、无人报警」。
+  // 故此处必须明确告警，并提示改用 Word 表格后人工核对。
+  const tableLines = rawLines.filter((l) => /^\s*\|.*\|\s*$/.test(l)).length;
+  if (tableLines > 0) {
+    process.stderr.write('警告：检测到 ' + tableLines + ' 行 Markdown 表格。DOCX 导出不支持表格，' +
+      '这些行会退化为一段带竖线的正文（字不丢、表格形态丢失）。\n' +
+      '建议：先导出正文，再在 Word 中重建表格；或用以表格存在的原稿走 format_docx.js。\n');
   }
 
   const exists = fs.existsSync(args.output);

@@ -18,6 +18,7 @@ const HELP = `用法: node check_format.js <文件> [--json] [--max-chars N]
 选项:
   --json          输出 JSON 到 stdout
   --max-chars N   非空白字符数上限（注意：不是 Word“字数”）
+  --no-structure  跳过结构要素检查（标题/主送/日期/落款/结语）
   -h, --help      显示本帮助
 
 退出码: 0 通过；1 有待处理项；2 参数或读取错误。
@@ -32,6 +33,7 @@ const PLACEHOLDERS = [
 
 const LINE_CHECKS = [
   { code: 'SERIAL_DUNHAO', re: /^\s*\d+、/, msg: '层级序数应为“1.”（下脚点），不是“1、”' },
+  { code: 'SERIAL_HANJU', re: /^\s*[一二三四五六七八九十]+[.．]/, msg: '第一层序数应为“一、”（顿号），不是“一.”或“一．”' },
   { code: 'SERIAL_PAREN_PUNCT', re: /^\s*（[一二三四五六七八九十]+）[、.．]/, msg: '“（一）”后不应加顿号或点' },
   { code: 'SERIAL_HALF_PAREN', re: /^\s*\([一二三四五六七八九十]+\)/, msg: '序号括号应为全角“（一）”' },
   { code: 'DATE_CN_YEAR', re: /[〇零一二三四五六七八九]{4}年/, msg: '成文日期应用阿拉伯数字，不用汉字年份' },
@@ -125,7 +127,7 @@ function plausibleHeading(line) {
 }
 
 function parseArgs(argv) {
-  const result = { file: null, json: false, maxChars: null, help: false, error: '' };
+  const result = { file: null, json: false, maxChars: null, noStructure: false, help: false, error: '' };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '-h' || arg === '--help') {
@@ -134,6 +136,10 @@ function parseArgs(argv) {
     }
     if (arg === '--json') {
       result.json = true;
+      continue;
+    }
+    if (arg === '--no-structure') {
+      result.noStructure = true;
       continue;
     }
     if (arg === '--max-chars') {
@@ -210,6 +216,92 @@ function scanLines(text, isMarkdown) {
   return { issues, chars: text.replace(/\s/g, '').length };
 }
 
+/**
+ * 结构要素存在性检查（v0.6.3 新增）。
+ *
+ * 动因：v0.6.2 及以前，一份「无落款、无日期」的通知甚至只有五个字的稿子
+ * 都能通过 check_format（passed:true, exit 0）。而 SKILL.md 检查清单把
+ * 「退出码 0」直接写成「G4a 通过」——于是「自述已核对」在制度层面被合法化。
+ * 本函数补上「要素在不在」的底线判断，让 exit 0 真正意味着有东西可查。
+ *
+ * 判定口径：
+ * - 只查"在不在"，不查"写得对不对"（后者归 G4a 内容层与人工）；
+ * - 片段补写任务不应直接跑本脚本（S5 已规定），故不设"片段豁免"开关；
+ * - 缺项一律 error 级，因为 G4a 是阻断门禁。
+ */
+function checkStructure(text, isMarkdown) {
+  const issues = [];
+  const lines = text.split(/\r?\n/).map((l) => (isMarkdown ? l.replace(/^#{1,6}\s+/, '') : l).trim());
+  const body = lines.filter(Boolean);
+  const chars = text.replace(/\s/g, '').length;
+
+  if (!body.length) {
+    issues.push({ line: 0, code: 'STRUCT_EMPTY', severity: 'error', message: '正文为空，无法做任何格式判定' });
+    return issues;
+  }
+  if (chars < 30) {
+    issues.push({
+      line: 0, code: 'STRUCT_TOO_SHORT', severity: 'error',
+      message: '非空白字符仅 ' + chars + ' 个，不足以构成一份公文；请确认是否为片段（片段不适用本脚本）',
+    });
+  }
+
+  // 1) 标题：首段须含法定文种名
+  const legalTypes = ['决议', '决定', '命令', '公报', '公告', '通告', '意见', '通知', '通报',
+    '报告', '请示', '批复', '议案', '函', '纪要'];
+  const first = body[0] || '';
+  const hasType = legalTypes.some((t) => first.endsWith(t) || first.includes(t));
+  if (!hasType) {
+    issues.push({
+      line: 1, code: 'STRUCT_TITLE', severity: 'error',
+      message: '首段未含 15 个法定文种名之一，标题三要素（发文机关＋事由＋文种）不成立',
+    });
+  }
+
+  // 2) 主送机关：须有一段以冒号结尾且不含句末标点
+  const hasRecipient = body.some((l, i) => i > 0 && /[：:]\s*$/.test(l) && l.length <= 60 && !/[。！？；]/.test(l));
+  if (!hasRecipient) {
+    issues.push({
+      line: 0, code: 'STRUCT_RECIPIENT', severity: 'error',
+      message: '未找到主送机关（应为独立一段、以全角冒号结尾）；公布性文种确实无主送时请人工确认',
+    });
+  }
+
+  // 3) 成文日期：须有 YYYY年M月D日 形态
+  const dateRe = /(19|20)\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日/;
+  const dateLine = body.findIndex((l) => dateRe.test(l));
+  if (dateLine < 0) {
+    issues.push({
+      line: 0, code: 'STRUCT_DATE', severity: 'error',
+      message: '未找到成文日期（应形如 2026年11月15日，月日不编虚位）；未提供时应用【待补：成文日期】占位',
+    });
+  }
+
+  // 4) 落款：日期之前须有一段短语作发文机关署名
+  if (dateLine > 0) {
+    const prev = body[dateLine - 1];
+    const looksSignature = prev && prev.length <= 30 && !/[。；，：！？]$/.test(prev)
+      && !/^[（(]/.test(prev) && !/^【/.test(prev);
+    if (!looksSignature) {
+      issues.push({
+        line: 0, code: 'STRUCT_SIGNATURE', severity: 'error',
+        message: '成文日期前一段不像发文机关署名（应为短语、无句末标点）',
+      });
+    }
+  }
+
+  // 5) 结语：法定文种通常须有结语（特此通知／妥否请批示／特此报告等）
+  const closingRe = /(特此(通知|报告|批复|函告|公告|通告|通报|说明)|此复|妥否[，,]\s*请批示|当否[，,]\s*请批复|请予批复|以上报告[，,]\s*请审阅)/;
+  if (!closingRe.test(text)) {
+    issues.push({
+      line: 0, code: 'STRUCT_CLOSING', severity: 'warn',
+      message: '未找到结语（如“特此通知”“妥否，请批示”“特此报告”），请确认与文种匹配',
+    });
+  }
+
+  return issues;
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
@@ -243,6 +335,9 @@ function main() {
   }
 
   const { issues, chars } = scanLines(text, isMarkdown);
+  if (!args.noStructure) {
+    checkStructure(text, isMarkdown).forEach((i) => issues.push(i));
+  }
 
   if (args.maxChars && chars > args.maxChars) {
     issues.push({
