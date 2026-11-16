@@ -165,6 +165,55 @@ test('交付前检查清单含红线提示', () => {
   assert.ok(/政治/.test(chk), '检查清单未提政治表述');
 });
 
+// --------------------------------------- v0.6.4 遗留项回归
+test('跳级序数必须被拦（一、→1. 曾放行）', () => {
+  // 标题行不能以句号结尾，否则会被判为正文段；本用例只测层级跳级
+  const text = GOOD.replace('（一）压实责任。各区县于11月30日前完成排查。', '1.具体要求');
+  const r = check(write('skiplevel.txt', text));
+  assert.strictEqual(r.code, 1, '应 exit 1，实际 ' + r.code);
+  assert.ok(r.json.issues.some((i) => i.code === 'SERIAL_SKIP_LEVEL'),
+    JSON.stringify(r.json.issues.map((i) => i.code)));
+});
+
+test('逐层展开的序数不误报跳级', () => {
+  const text = GOOD.replace('（一）压实责任。各区县于11月30日前完成排查。',
+    '（一）具体要求\n\n1.各区县于11月30日前完成排查');
+  const r = check(write('oklevel.txt', text));
+  assert.ok(!r.json.issues.some((i) => i.code === 'SERIAL_SKIP_LEVEL'),
+    JSON.stringify(r.json.issues.map((i) => i.code)));
+});
+
+test('同一对象金额前后不一必须报（曾完全放行）', () => {
+  const text = GOOD.replace('为做好汛期安全工作，现就有关事项通知如下。',
+    '本项目共需资金80万元。').replace('请认真贯彻执行。', '经复核，本项目共需资金50万元。');
+  const r = check(write('amount.txt', text));
+  assert.ok(r.json.issues.some((i) => i.code === 'CONSIST_AMOUNT'),
+    JSON.stringify(r.json.issues.map((i) => i.code)));
+});
+
+test('总额与分项关系不误报（80万其中设备50万）', () => {
+  const text = GOOD.replace('为做好汛期安全工作，现就有关事项通知如下。',
+    '本项目共需资金80万元，其中设备购置50万元。');
+  const r = check(write('partition.txt', text));
+  assert.ok(!r.json.issues.some((i) => i.code === 'CONSIST_AMOUNT'),
+    JSON.stringify(r.json.issues.map((i) => i.code)));
+});
+
+test('主送与正文受文范围矛盾必须被拦（曾完全放行）', () => {
+  const text = GOOD.replace('请认真贯彻执行。', '请各市州于11月30日前报送材料。');
+  const r = check(write('recip.txt', text));
+  assert.strictEqual(r.code, 1, '应 exit 1，实际 ' + r.code);
+  assert.ok(r.json.issues.some((i) => i.code === 'CONSIST_RECIPIENT'),
+    JSON.stringify(r.json.issues.map((i) => i.code)));
+});
+
+test('主送与正文层级一致时不误报', () => {
+  const text = GOOD.replace('请认真贯彻执行。', '请各区县于11月30日前报送材料。');
+  const r = check(write('recip-ok.txt', text));
+  assert.ok(!r.json.issues.some((i) => i.code === 'CONSIST_RECIPIENT'),
+    JSON.stringify(r.json.issues.map((i) => i.code)));
+});
+
 // ------------------------------------------------------------------ 汇总
 console.log('\n' + '='.repeat(56));
 console.log('门禁有效性回归：通过 ' + passed + ' / 失败 ' + failed);

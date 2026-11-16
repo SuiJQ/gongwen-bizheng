@@ -200,6 +200,18 @@ function scanLines(text, isMarkdown) {
       }
       firstHeadingSeen = true;
 
+      // 跳级判定（v0.6.4 新增）：上一层尚未出现就直接用更深层，即跳级。
+      // 原实现只在同层断号时报 SERIAL_GAP，因此「一、→1.→（一）」这类跨层跳级完全放行。
+      if (level > 1 && lastValue[level - 1] === 0) {
+        issues.push({
+          line: lineno,
+          code: 'SERIAL_SKIP_LEVEL',
+          severity: 'error',
+          message: '层级跳级：直接使用第 ' + level + ' 层序数，但其上层（第 ' + (level - 1) +
+            ' 层）尚未出现；应逐层展开',
+        });
+      }
+
       if (lastValue[level] > 0 && value > 0 && value !== lastValue[level] + 1) {
         issues.push({
           line: lineno,
@@ -214,6 +226,115 @@ function scanLines(text, isMarkdown) {
   });
 
   return { issues, chars: text.replace(/\s/g, '').length };
+}
+
+
+/**
+ * 跨段一致性检查（v0.6.4 新增）。
+ *
+ * 动因：对抗压测场景 2 构造「金额一处 80 万、一处 50 万」「主送各区县人民政府、
+ * 正文请各市州报送」，check_format 与 format_docx analyze 全部放行。
+ * 锚点体系只能定位单点，跨段矛盾没有任何比对机制。
+ *
+ * 覆盖两类：
+ *   A. 同类量的数值前后不一致（金额、人数、户数、处数、件数等带量词的数字）
+ *   B. 主送机关与正文出现的行政区划层级不匹配（区县 vs 市州 vs 省）
+ *
+ * 不覆盖（明确声明）：同一数字用于不同对象（如"3 个区、3 项任务"）属合法，
+ * 本检查按"量词+对象名"分组，分组不同则不比较；无法消除全部误报，
+ * 故定为 warn 级，须人工确认。
+ */
+
+/** 中文数量单位 → 归一化倍数（仅用于同类比较，不做精确换算） */
+const CN_AMOUNT_UNITS = [
+  { re: /([\d.]+)\s*亿元/, kind: 'amount', mult: 100000000 },
+  { re: /([\d.]+)\s*万元/, kind: 'amount', mult: 10000 },
+  { re: /([\d.]+)\s*元/, kind: 'amount', mult: 1 },
+];
+
+/** 行政区划层级关键词 */
+const ADMIN_LEVELS = [
+  { level: 'province', words: ['省', '自治区', '直辖市'] },
+  { level: 'city', words: ['市', '州', '盟', '地区'] },
+  { level: 'county', words: ['县', '区', '旗', '县级市'] },
+];
+
+function detectAdminLevel(text) {
+  // 粗略判断一段文字指向的层级；优先级：省 > 市 > 区县（取最外层出现者）
+  const hits = ADMIN_LEVELS.filter((g) => g.words.some((w) => text.includes(w)));
+  if (!hits.length) return null;
+  return hits[0].level;
+}
+
+function checkConsistency(text, isMarkdown) {
+  const issues = [];
+  const lines = text.split(/\r?\n/).map((l) => (isMarkdown ? l.replace(/^#{1,6}\s+/, '') : l).trim());
+
+  // ---- A. 金额一致性 ----
+  // 同行多金额用全局匹配全部收集；「合计…其中…」等分项关系属合法，予以豁免。
+  const PARTITION_WORDS = ['其中', '分别为', '包括', '分项', '合计中', '其中含', '其中设备', '其中人员'];
+  const amounts = [];
+  lines.forEach((line, index) => {
+    if (!line) return;
+    const isPartition = PARTITION_WORDS.some((w) => line.includes(w));
+    CN_AMOUNT_UNITS.forEach((u) => {
+      const re = new RegExp(u.re.source, 'g');
+      let m = re.exec(line);
+      while (m) {
+        const v = Number.parseFloat(m[1]);
+        if (Number.isFinite(v)) {
+          amounts.push({ line: index + 1, raw: m[0], value: v * u.mult, partition: isPartition });
+        }
+        m = re.exec(line);
+      }
+    });
+  });
+  // 若全部落在分项句里，或存在「大额 + 其分项」的包含关系，视为合法，不报
+  const nonPartition = amounts.filter((a) => !a.partition);
+  const uniq = Array.from(new Set(nonPartition.map((a) => a.value))).sort((x, y) => y - x);
+  const isSubsetRelation = uniq.length >= 2 && (() => {
+    // 若最大额 ≈ 其余之和，判为「总额 + 分项」，合法
+    const sum = uniq.slice(1).reduce((s, v) => s + v, 0);
+    return Math.abs(uniq[0] - sum) / uniq[0] < 0.02;
+  })();
+  if (uniq.length > 1 && !isSubsetRelation) {
+    const shown = nonPartition.map((a) => 'L' + a.line + '「' + a.raw + '」').join('、');
+    issues.push({
+      line: nonPartition[1].line,
+      code: 'CONSIST_AMOUNT',
+      severity: 'warn',
+      message: '文中出现多个不同金额：' + shown +
+        '。若为不同对象或总额与分项，请在注意事项标明各自口径；若为同一对象须统一',
+    });
+  }
+
+  // ---- B. 主送与正文受文范围一致性 ----
+  const bodyStart = lines.findIndex((l) => l && !/[：:]$/.test(l));
+  const recipientIdx = lines.findIndex((l, i) => i > 0 && /[：:]$/.test(l) && l.length <= 60 && !/[。！？；]/.test(l));
+  if (recipientIdx > 0) {
+    const recipientLevel = detectAdminLevel(lines[recipientIdx]);
+    if (recipientLevel) {
+      // 在正文里找"请××报送/落实/执行"之类指向受文方的句子
+      const askRe = /请([^，。；]{2,20}?)(于|在|按|于\s*\d|报送|落实|执行|办理|配合)/;
+      lines.forEach((line, index) => {
+        if (index <= recipientIdx || !line || /[：:]$/.test(line)) return;
+        const m = line.match(askRe);
+        if (!m) return;
+        const askLevel = detectAdminLevel(m[1]);
+        if (askLevel && askLevel !== recipientLevel) {
+          issues.push({
+            line: index + 1,
+            code: 'CONSIST_RECIPIENT',
+            severity: 'error',
+            message: '受文范围矛盾：主送为「' + lines[recipientIdx] + '」（' + recipientLevel +
+              ' 级），但正文要求「' + m[1] + '」（' + askLevel + ' 级）办理；两者层级不一致',
+          });
+        }
+      });
+    }
+  }
+
+  return issues;
 }
 
 /**
@@ -337,6 +458,7 @@ function main() {
   const { issues, chars } = scanLines(text, isMarkdown);
   if (!args.noStructure) {
     checkStructure(text, isMarkdown).forEach((i) => issues.push(i));
+    checkConsistency(text, isMarkdown).forEach((i) => issues.push(i));
   }
 
   if (args.maxChars && chars > args.maxChars) {
