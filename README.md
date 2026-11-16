@@ -2,7 +2,7 @@
 
 面向中文公文与机关材料的写作技能包：覆盖法定 15 文种与讲话、总结、方案、调研报告、经验材料、汇报、会议材料等，支持**起草／修改／审核／片段补写**四类任务。采用单 agent、S0–S6 七阶段流程、G1–G7 取证式门禁，交付物固定为「正文」与「注意事项」两部分。
 
-- **版本**：0.6.4（frontmatter `metadata.version`；变更见 `CHANGELOG.md`）
+- **版本**：0.7.0（frontmatter `metadata.version`；变更见 `CHANGELOG.md`）
 - **许可证**：GPL-3.0-only（全文见 `LICENSE`，GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007）
 - **安装位置**：`~/.workbuddy/skills/gongwen-bizheng/`（用户级技能；技能目录属系统约定路径）
 - **上游**：`github.com/SuiJQ/gongwen-bizheng`。v0.2.1 于 2026-11-15 导入（13 个文件经 git blob SHA-1 校验）；v0.4.2 已于同日推送至 `main`（commit `d3c6009`，31 文件，git blob SHA-1 与本地逐文件一致）
@@ -31,6 +31,7 @@ references/
   13-experience.md             记忆梦境：经验提炼协议（v0.6.0 新增）
 scripts/
   check_format.js              文本层格式／占位符机检（零第三方依赖）
+  check_rhythm.js              句式节奏检测（零第三方依赖，只检测不改写）
   export_docx.js               净稿导出 DOCX（零第三方依赖）
   format_docx.js               版式修复／元数据清理／只读诊断入口（零第三方依赖）
   docformat/                   版式能力实现，12 个模块（zip、docpkg、xml、detect、ppr、format、structure、clean、meta、diagnose、preset、index）
@@ -146,7 +147,7 @@ v0.2.1 全包检索未检出对上述技能或资料包的引用、致谢；自 
 
 ## 版本字段说明
 
-内置 `skill-creator/SKILL.md:34-36` 规定 frontmatter 必需字段仅 `name` 与 `description`；平台对 `metadata.version` 的识别规则**未检出**。本机已验证含 `license`／`metadata` 的本技能可正常加载，故保留该字段并随版本推进（当前 0.6.4），同时在本文件写明版本；不臆造顶层 `version` 字段。
+内置 `skill-creator/SKILL.md:34-36` 规定 frontmatter 必需字段仅 `name` 与 `description`；平台对 `metadata.version` 的识别规则**未检出**。本机已验证含 `license`／`metadata` 的本技能可正常加载，故保留该字段并随版本推进（当前 0.7.0），同时在本文件写明版本；不臆造顶层 `version` 字段。
 
 ## 回归与回滚
 

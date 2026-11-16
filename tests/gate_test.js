@@ -214,6 +214,41 @@ test('主送与正文层级一致时不误报', () => {
     JSON.stringify(r.json.issues.map((i) => i.code)));
 });
 
+// --------------------------------------- v0.7.0 X 级清单与节奏检测
+test('X 级已否决清单存在且被 G6 引用（防孤儿）', () => {
+  const lang = fs.readFileSync(path.join(ROOT, 'references', '06-language.md'), 'utf8');
+  const review = fs.readFileSync(path.join(ROOT, 'references', '07-review.md'), 'utf8');
+  assert.ok(/## 十二、X 级已否决/.test(lang), '06-language 缺 X 级章节');
+  assert.ok(/X 级已否决/.test(review), '07-review 未引用 X 级（会成为孤儿）');
+});
+
+test('X 级清单覆盖四类不该删的写法', () => {
+  const lang = fs.readFileSync(path.join(ROOT, 'references', '06-language.md'), 'utf8');
+  const sec = lang.split('## 十二、X 级已否决')[1] || '';
+  ['总评句', '表态句', '序数', '结语'].forEach((k) => {
+    assert.ok(sec.includes(k), 'X 级清单缺「' + k + '」');
+  });
+});
+
+test('check_rhythm.js 已被资源索引登记', () => {
+  const skill = fs.readFileSync(path.join(ROOT, 'SKILL.md'), 'utf8');
+  assert.ok(/check_rhythm\.js/.test(skill), 'SKILL 资源索引未登记 check_rhythm.js');
+});
+
+test('节奏检测阈值不沿用网文基线（CV_MIN 须 <0.2）', () => {
+  const { spawnSync } = require('child_process');
+  const tmp = path.join(TMP, 'cv.txt');
+  // GOOD 仅约 110 汉字，节奏脚本要求 >=100 才跑；这里用足量文本确保进入分析分支
+  fs.writeFileSync(tmp, [GOOD, GOOD, GOOD].join('\n\n'), 'utf8');
+  const r = spawnSync(process.execPath,
+    [path.join(ROOT, 'scripts', 'check_rhythm.js'), tmp, '--json'], { encoding: 'utf8' });
+  let j = null;
+  try { j = JSON.parse(r.stdout); } catch (e) { /* ignore */ }
+  assert.ok(j && j.baseline, '未输出 baseline');
+  assert.ok(j.baseline.CV_MIN < 0.2,
+    'CV_MIN=' + j.baseline.CV_MIN + ' 偏大，疑沿用网文阈值 0.55');
+});
+
 // ------------------------------------------------------------------ 汇总
 console.log('\n' + '='.repeat(56));
 console.log('门禁有效性回归：通过 ' + passed + ' / 失败 ' + failed);
