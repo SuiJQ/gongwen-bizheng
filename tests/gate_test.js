@@ -367,6 +367,117 @@ test('经验写入不等用户确认，记忆文件仍须确认', () => {
   assert.ok(/记忆文件/.test(s6) && /请用户确认/.test(s6), 'S6 未区分记忆文件仍需确认');
 });
 
+// ------------------------------------------------- v0.8.1 文种分流（P0）
+// 旧实现把所有文体都按"通知形态"判：公告/通告/公报/决议/纪要/命令无主送被判 error，
+// 8 类事务材料因标题不含法定文种名被判 STRUCT_TITLE error。23 类里 13 类被误判阻断。
+
+test('13 类曾被误判阻断的文体必须通过结构检查', () => {
+  const cases = [
+    ['公告', '关于公布清理结果的公告\n\n根据安排，现将结果公布如下：\n\n一、继续有效\n共120件。\n\nXX市人民政府\n2026年11月15日\n'],
+    ['通告', '关于开展道路施工的通告\n\n为保障施工，现将有关事项通告如下：\n\n一、施工时间\n2026年11月20日至12月20日。\n\nXX市人民政府\n2026年11月15日\n'],
+    ['公报', '中国共产党XX市第八届委员会第五次全体会议公报\n\n2026年11月15日\n\n全会审议通过了有关决定。\n'],
+    ['决议', '关于批准2026年预算的决议\n\nXX市第十六届人民代表大会第四次会议审议了预算草案。\n\n会议决定批准该预算。\n\nXX市人民代表大会\n2026年11月15日\n'],
+    ['纪要', '全市安全生产工作会议纪要\n\n2026年11月15日，市政府召开全市安全生产工作会议。\n\n一、会议认为\n形势总体平稳。\n'],
+    ['命令', 'XX市人民政府令\n\n第15号\n\n《XX市安全生产管理办法》现予公布。\n\n市长：XXX\n2026年11月15日\n'],
+    ['总结', 'XX市应急管理局2026年安全生产工作总结\n\n2026年，我局认真落实上级部署。\n\n一、主要做法\n逐级签订责任书。\n\nXX市应急管理局\n2026年11月15日\n'],
+    ['讲话', '在全市安全生产工作会议上的讲话\n\n同志们：\n\n今天召开这次会议，主要任务是分析形势、部署工作。\n\n一、认清形势\n总体平稳。\n'],
+    ['方案', '关于开展专项整治三年行动的工作方案\n\n为落实上级部署，制定本方案。\n\n一、总体要求\n坚持问题导向。\n\nXX市应急管理局\n2026年11月15日\n'],
+    ['述职', '2026年度抓基层党建工作述职报告\n\n一、履职情况\n认真履行第一责任人职责。\n\nXX市应急管理局党组书记 XXX\n2026年11月15日\n'],
+    ['经验材料', '坚持三个聚焦 推动形势持续向好\n——XX市应急管理局经验做法\n\n一、聚焦责任落实\n逐级签订责任书。\n'],
+    ['汇报', '关于第三季度安全生产工作情况的汇报\n\n为落实上级部署，现将有关情况汇报如下：\n\n一、主要工作\n开展专项整治。\n\nXX市应急管理局\n2026年11月15日\n'],
+    ['会议材料', '全市安全生产工作会议议题说明\n\n一、议题背景\n当前形势需要专题研究。\n\n二、建议事项\n请会议审议。\n'],
+  ];
+  cases.forEach(([name, text]) => {
+    const r = check(write('genre-' + name + '.txt', text));
+    const bad = (r.json.issues || []).filter((i) => i.severity === 'error');
+    assert.strictEqual(bad.length, 0, name + ' 仍报 error：' + JSON.stringify(bad));
+  });
+});
+
+test('事务材料可用 --type 显式声明（标题不含文种名时）', () => {
+  const text = '几个不规范的标题\n\n一、甲\n认真组织。\n\n二、乙\n抓好落实。\n';
+  const inferred = check(write('affair-infer.txt', text));
+  assert.ok(inferred.json.issues.some((i) => i.code === 'STRUCT_TITLE'), '未加 --type 时应从严');
+  const declared = check(write('affair-declared.txt', text), ['--type', '总结']);
+  assert.ok(!declared.json.issues.some((i) => i.code === 'STRUCT_TITLE'), '--type 总结 后不应再判标题');
+});
+
+test('--type 非法值返回 2', () => {
+  const r = check(write('badtype.txt', GOOD), ['--type', '火星文']);
+  assert.strictEqual(r.code, 2, '非法文体应 exit 2，实际 ' + r.code);
+});
+
+test('主送机关半角冒号必须被拦（曾 0 issues 通过）', () => {
+  const text = GOOD.replace('各区县人民政府：', '各区县人民政府:');
+  const r = check(write('half-colon.txt', text));
+  assert.ok(r.json.issues.some((i) => i.code === 'RECIPIENT_COLON_HALF'), JSON.stringify(r.json.issues));
+});
+
+test('结语判据文本层与版式层同口径（特此函达／以上请示，请批示／以上意见请批转）', () => {
+  const variants = [
+    ['函', '关于商请协助的函\n\n市交通运输局：\n\n因工作需要，请贵局协助。\n\n特此函达。\n\nXX市应急管理局\n2026年11月15日\n'],
+    ['请示', '关于申请经费的请示\n\n市财政局：\n\n拟申请经费50万元。\n\n以上请示，请批示。\n\nXX市应急管理局\n2026年11月15日\n'],
+    ['意见', '关于加强工作的意见\n\n各区县人民政府：\n\n现提出如下意见。\n\n以上意见，如无不妥，请批转执行。\n\nXX市应急管理局\n2026年11月15日\n'],
+  ];
+  variants.forEach(([name, text]) => {
+    const r = check(write('closing-' + name + '.txt', text));
+    assert.ok(!r.json.issues.some((i) => i.code === 'STRUCT_CLOSING'),
+      name + ' 仍误报缺结语：' + JSON.stringify(r.json.issues));
+  });
+});
+
+test('事务材料的 DOCX 不再误报 ELEMENT_DATE／ELEMENT_SIGNATURE', () => {
+  const text = '在全市安全生产工作会议上的讲话\n\n同志们：\n\n今天召开这次会议，主要任务是分析形势、部署工作。\n\n一、认清形势\n总体平稳。\n';
+  const src = write('affair-docx.txt', text);
+  const out = path.join(TMP, 'affair.docx');
+  const ex = spawnSync(process.execPath, [EXPORT, src, out], { encoding: 'utf8' });
+  assert.strictEqual(ex.status, 0, 'export 失败：' + ex.stderr);
+  const an = spawnSync(process.execPath,
+    [path.join(ROOT, 'scripts', 'format_docx.js'), 'analyze', out, '--json'], { encoding: 'utf8' });
+  let j = null;
+  try { j = JSON.parse(an.stdout); } catch (e) { /* ignore */ }
+  assert.ok(j, 'analyze 未输出 JSON：' + an.stderr);
+  const codes = j.issues.map((i) => i.code);
+  assert.ok(!codes.includes('ELEMENT_DATE'), '仍报 ELEMENT_DATE：' + codes);
+  assert.ok(!codes.includes('ELEMENT_SIGNATURE'), '仍报 ELEMENT_SIGNATURE：' + codes);
+});
+
+// ------------------------------------------------- v0.8.1 机检码覆盖（补 45 个零断言码）
+test('check_format 各检查码按预期触发（表驱动）', () => {
+  const cases = [
+    ['DATE_CN_YEAR', (t) => t.replace('2026年11月15日', '二〇二六年十一月十五日')],
+    ['DATE_ZERO_MONTH', (t) => t.replace('2026年11月15日', '2026年01月15日')],
+    ['DATE_ZERO_DAY', (t) => t.replace('2026年11月15日', '2026年11月05日')],
+    ['DATE_HAO', (t) => t.replace('2026年11月15日', '2026年11月15号')],
+    ['DATE_SEPARATOR', (t) => t.replace('2026年11月15日', '2026.11.15')],
+    ['DOC_NO_BRACKET', () => '关于开展检查的通知\n\n（2026）1号\n\n各区县人民政府：\n\n为做好工作，现通知如下：\n\n一、要求\n认真组织。\n\n特此通知。\n\nXX市人民政府\n2026年11月15日\n'],
+    ['DOC_NO_DI', () => '关于开展检查的通知\n\nXX〔2026〕第1号\n\n各区县人民政府：\n\n为做好工作，现通知如下：\n\n特此通知。\n\nXX市人民政府\n2026年11月15日\n'],
+    ['DOC_NO_ZERO', () => '关于开展检查的通知\n\nXX〔2026〕01号\n\n各区县人民政府：\n\n为做好工作，现通知如下：\n\n特此通知。\n\nXX市人民政府\n2026年11月15日\n'],
+    ['PUNCT_EXCLAIM', (t) => t.replace('请认真贯彻执行。', '请认真贯彻执行！')],
+    ['PUNCT_REPEAT', (t) => t.replace('特此通知。', '特此通知。。')],
+    ['RANGE_TILDE', (t) => t.replace('请认真贯彻执行。', '11月20~21日完成整改。')],
+    ['THEME_WORD', (t) => t.replace('特此通知。', '主题词：安全 检查')],
+    ['NO_BODY_TEXT', (t) => t.replace('特此通知。', '（此页无正文）')],
+    ['DOC_TYPE_MIX', (t) => t.replace('关于做好汛期安全隐患排查工作的通知', '关于汛期排查的请示报告')],
+    ['COPY_REPORT', (t) => t.replace('特此通知。', '抄报：市政府。')],
+    ['ATTACH_COLON_HALF', (t) => t.replace('特此通知。', '附件:1.检查表')],
+    ['SERIAL_HANJU', (t) => t.replace('一、总体要求', '一.总体要求')],
+    ['SERIAL_HALF_PAREN', (t) => t.replace('（一）压实责任。', '(一)压实责任。')],
+    ['REPORT_ENDING', () => '关于工作情况的报告\n\n市人民政府：\n\n现将情况报告如下：\n\n一、总体情况\n平稳。\n\n妥否，请批示。\n\nXX市应急管理局\n2026年11月15日\n'],
+    ['HEADING_START', () => '关于开展检查的通知\n\n各区县人民政府：\n\n为做好工作，现通知如下：\n\n（一）具体要求\n认真组织。\n\n特此通知。\n\nXX市人民政府\n2026年11月15日\n'],
+  ];
+  cases.forEach(([code, mutate]) => {
+    const text = mutate(GOOD);
+    const r = check(write('cov-' + code + '.txt', text));
+    const codes = (r.json && r.json.issues || []).map((i) => i.code);
+    assert.ok(codes.includes(code), code + ' 未触发，实际：' + JSON.stringify(codes));
+  });
+  const max = check(write('cov-max.txt', GOOD), ['--max-chars', '10']);
+  assert.ok((max.json.issues || []).some((i) => i.code === 'MAX_CHARS'), 'MAX_CHARS 未触发');
+  const empty = check(write('cov-empty.txt', '\n\n'));
+  assert.ok((empty.json.issues || []).some((i) => i.code === 'STRUCT_EMPTY'), 'STRUCT_EMPTY 未触发');
+});
+
 // ------------------------------------------------------------------ 汇总
 console.log('\n' + '='.repeat(56));
 console.log('门禁有效性回归：通过 ' + passed + ' / 失败 ' + failed);

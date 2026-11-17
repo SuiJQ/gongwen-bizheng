@@ -4,7 +4,7 @@ description: 当用户起草、修改、审核、补写或规范化中文公文�
 license: GPL-3.0-only
 agent_created: true
 metadata:
-  version: "0.8.0"
+  version: "0.8.1"
 ---
 
 # 公文笔正
@@ -36,7 +36,7 @@ metadata:
 - [ ] G4b 字体字号、页边距、印章、页码；起草/修改须跑完 S5 排版工序并对成品跑 `format_docx.js analyze <文件> --json`（退出码 1 = 有阻断），按 `issues` 出结论；仅五种例外可记「无法判定·降级」，且须写明理由，不得默认通过
 - [ ] G7 原话、确认点、禁区、占位符、净稿一致
 - [ ] 正文与注意事项分开；正文无过程说明、假设清单、门禁记录、审核标注；每条占位在注意事项有编号
-- [ ] 运行 `node scripts/check_format.js <正文> --json`；退出码 0 通过／1 有项／2 错误，按 `code` 区分占位与格式提醒
+- [ ] 运行 `node scripts/check_format.js <正文> --json --type <文体>`；退出码 0 通过／1 有项／2 错误，按 `code` 区分占位与格式提醒。**文体必须传**：不传则按标题推断，事务材料与非通知类文种会被误判（v0.8.1）
 - [ ] S6 经验已落盘：`experience/E-NNN-*.md` 已写入并更新 `INDEX.md`（或四问中未过的那一问 + 缺什么 + 补什么可入库，已逐字写入注意事项；**不得只写"无可沉淀"**）
 
 ## 2. 易错项 Top 7
@@ -117,7 +117,7 @@ S0 识别与路由 → S1 采集与锁定 →【确认点① 骨架/方向】
 
 ### 二、工序细节（按顺序执行，不得跳步）
 
-1. **占位盘点**：`node scripts/check_format.js <正文.md|txt> --json`。整行占位（`【待补：成文日期】`）不判要素缺项，但计入待处理；占位未清零仍可导出，整包标「待核版」并在文件名与注意事项同步标注，不得当作可发文正式件。
+1. **占位盘点**：`node scripts/check_format.js <正文.md|txt> --json --type <文体>`。日期／署名／主送三类整行占位不判要素缺项，但计入待处理；占位未清零仍可导出，整包标「待核版」并在文件名与注意事项同步标注，不得当作可发文正式件。
 2. **导出**：`node scripts/export_docx.js <净稿.md|txt> <输出.docx> [--force]`（默认拒绝覆盖）。Markdown 表格会退化为正文并告警；要保表格须改用 `format_docx.js` 处理已有 docx。
 3. **排版**：`node scripts/format_docx.js smart <导出.docx> <输出_规范.docx> --force [--author 姓名]`。`smart` = 版式 + 元数据清理，一次完成。
 4. **复检**：`node scripts/format_docx.js analyze <输出_规范.docx> --json`。有 `error` 必须修掉或逐条写入注意事项；不得交付带 error 的版式结论。
@@ -164,7 +164,7 @@ S0 识别与路由 → S1 采集与锁定 →【确认点① 骨架/方向】
 
 政策核验不再单设一套标签：已核用 `[已核·来源：文件+条款]`，未核用 `[未知：待核对原文]`，交付时转 `【待核对原文：…】`。
 
-**整行 vs 混排（v0.8.0）**：交付占位必须**单独成行**、整段只有这一个占位（`【待补：成文日期】`）。整行占位在机检中记为"位置已声明、内容待补"，不判要素缺项（`check_format.js` 报 `PLACEHOLDER` 提醒、`format_docx.js` 报 `ELEMENT_PENDING` 信息），排版时也按其归属类型（日期／落款／主送）套版。与正文混排的占位（`为做好工作。【待补：成文日期】`）既不能定位也不能直接替换，**仍判要素缺项**。
+**整行 vs 混排（v0.8.0）**：交付占位必须**单独成行**、整段只有这一个占位（`【待补：成文日期】`）。**日期／署名／主送**三类整行占位记为"位置已声明、内容待补"，不判要素缺项（`check_format.js` 报 `PLACEHOLDER` 提醒、`format_docx.js` 报 `ELEMENT_PENDING` 信息），排版时按其归属类型套版；**标题、结语的占位仍按缺项处理**——标题不能推定，结语须与文种匹配。与正文混排的占位（`为做好工作。【待补：成文日期】`）既不能定位也不能直接替换，**仍判要素缺项**。
 
 脚本 `check_format.js` 会扫描以上全部标识与 `TODO`/`TBD`。
 
@@ -186,7 +186,7 @@ S0 识别与路由 → S1 采集与锁定 →【确认点① 骨架/方向】
 | S0 读记忆／S6 写记忆 | `references/08-memory.md` | 含第十二节主文件记忆协议 |
 | 好差对照与边界案例 | `references/09-cases.md` | 仅争议时 |
 | 任一能力缺失需降级 | `references/10-degradation.md` | 只读命中的那一行 |
-| S5 格式机检 | `node scripts/check_format.js <文件> [--json] [--max-chars N]` | 0 通过／1 有项／2 参数或读取错误 |
+| S5 格式机检 | `node scripts/check_format.js <文件> [--json] [--type 文体] [--max-chars N]` | 0 通过／1 有项／2 参数或读取错误；`--type` 决定按哪套要素要求判 |
 | S5/G6 查句式节奏 | `node scripts/check_rhythm.js <文件> [--json]` | 只检测；句长CV／同构／等长并列 |
 | S5 排版工序 b 步（起草/修改必做） | `node scripts/export_docx.js <净稿.md> <输出.docx> [--force] [--dry-run]`（输入支持 .md/.txt） | 默认拒绝覆盖；DOCX 只导正文 |
 | S5 有 .docx 需出 G4b 结论 | `node scripts/format_docx.js analyze <文件> --json` | 只读，不改文件；退出码 0／1／2 |

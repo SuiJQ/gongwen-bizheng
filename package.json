@@ -1,6 +1,6 @@
 {
   "name": "gongwen-bizheng",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "description": "党政公文写作技能包的脚本层：文本层格式机检、净稿导出 DOCX、DOCX 版式规范化与元数据清理（纯 Node，零第三方依赖）",
   "license": "GPL-3.0-only",

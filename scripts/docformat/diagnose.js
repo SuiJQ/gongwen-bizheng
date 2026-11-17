@@ -12,6 +12,7 @@ const {
   getLineSpacing, getFirstRunFont, getFirstRunSize, hasMedia, unescapeXml, readTag,
 } = require('./xml');
 const { detectType, refineTypes, placeholderType } = require('./detect');
+const { resolveGenre } = require('./genre');
 const { isGeneratorValue, isAppPlatformMismatch, CORE_PART, APP_PART } = require('./meta');
 
 const CM_TOLERANCE = 0.2;
@@ -199,15 +200,22 @@ function diagnoseParagraphs(pkg, preset, issues) {
   return { types, rows };
 }
 
-function diagnoseElements(types, issues, rows) {
+function diagnoseElements(types, issues, rows, options) {
+  const opts = options || {};
   const has = (t) => types.includes(t);
-  if (!has('title')) {
+  // v0.8.1：要素要求按文种分流，与 check_format 共用 genre.js——
+  // 否则讲话稿/经验材料会被报"未识别到成文日期/署名"，而它们本就不设落款。
+  const headLines = (rows || []).filter((r) => r.text).slice(0, 2).map((r) => r.text);
+  const rules = resolveGenre(opts.type, headLines).rules;
+  const needTitle = !rules || rules.title !== false;
+  const needDate = !rules || rules.date !== false;
+  if (needTitle && !has('title')) {
     issues.push({ code: 'ELEMENT_TITLE', level: 'error', category: 'structure', message: '未识别到公文标题' });
   }
-  if (!has('date')) {
+  if (needDate && !has('date')) {
     issues.push({ code: 'ELEMENT_DATE', level: 'warn', category: 'structure', message: '未识别到成文日期' });
   }
-  if (!has('signature')) {
+  if (needDate && !has('signature')) {
     issues.push({ code: 'ELEMENT_SIGNATURE', level: 'warn', category: 'structure', message: '未识别到发文机关署名（落款）' });
   }
   // 整行占位不是"缺失"，而是"待补"：记 info，便于交付时逐条对账（v0.8.0）
@@ -370,7 +378,7 @@ function diagnose(pkg, preset, options) {
   const opts = options || {};
   const geometry = diagnoseGeometry(pkg, preset, issues);
   const para = diagnoseParagraphs(pkg, preset, issues);
-  diagnoseElements(para.types, issues, para.rows);
+  diagnoseElements(para.types, issues, para.rows, opts);
   diagnoseText(para.rows, issues);
   diagnoseMetadata(pkg, issues, opts.platform);
 

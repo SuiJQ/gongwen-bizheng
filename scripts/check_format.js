@@ -12,12 +12,21 @@ const fs = require('fs');
 const path = require('path');
 const { readZip } = require('./docformat/zip');
 const { readText } = require('./docformat/textio');
+// v0.8.1：结语判据不再各写一份——文本层与版式层共用 detect.js 的 CLOSING_RE
+const { CLOSING_RE } = require('./docformat/detect');
+// v0.8.1：文体规则表唯一一份，文本层与版式层共用
+const {
+  LEGAL_TYPES, AFFAIR_TYPES, normalizeType, isSupportedType, resolveGenre,
+} = require('./docformat/genre');
 
-const HELP = `用法: node check_format.js <文件> [--json] [--max-chars N]
+const HELP = `用法: node check_format.js <文件> [--json] [--type 文体] [--max-chars N]
 
 文件格式: .txt / .md / .docx（.docx 自动解包 word/document.xml）
 选项:
   --json          输出 JSON 到 stdout
+  --type 文体     声明文体，按该文体的要素要求检查（15 法定文种 + 讲话/总结/述职/
+                  方案/调研报告/经验材料/汇报/会议材料）。不传则按标题推断，
+                  推断不出按最严口径（法定公文形态）判定
   --max-chars N   非空白字符数上限（注意：不是 Word“字数”）
   --no-structure  跳过结构要素检查（标题/主送/日期/落款/结语）
   -h, --help      显示本帮助
@@ -26,9 +35,17 @@ const HELP = `用法: node check_format.js <文件> [--json] [--max-chars N]
 字数口径: 非空白字符数（汉字、字母、数字、标点各计 1），不等于 Word 字数。
 `;
 
+/**
+ * 需扫描的占位/标注标记。
+ *
+ * 规范写法只有 SKILL.md《占位与标注》表里那 7 个；下列方括号写法属**兼容别名**
+ * （历史稿件、外部模板常见），扫描到同样计入待处理，但交付时应改写为规范写法。
+ * v0.8.1 删除 `[待向`——无任何语义、文档零提及，疑为笔误；继续扫描它只会制造
+ * "警告里出现查不到的语法"这类噪音。
+ */
 const PLACEHOLDERS = [
-  '【待补', '【待核', '【待核对原文', '【未知', '【版式未核',
-  '[已核', '[假设', '[未知', '[未核', '[待核', '[待向', '[版式未核',
+  '【待补', '【待核对原文', '【待核', '【版式未核', '【未知',
+  '[已核', '[假设', '[未知', '[未核', '[待核', '[版式未核',
   'TODO', 'TBD',
 ];
 
@@ -64,6 +81,7 @@ function isPlaceholderAbout(line, re) {
  * 曾被误当成主送机关，从而把"主送真缺失"漏报掉（v0.8.0 修）。
  */
 const RECIPIENT_LEAD_RE = /(如下|下列|以下|下同|通知如下|报告如下|请示如下|函告如下)\s*[：:]$/;
+
 
 /**
  * 主送机关行的统一判据（v0.8.0）。
@@ -179,7 +197,7 @@ function plausibleHeading(line) {
 }
 
 function parseArgs(argv) {
-  const result = { file: null, json: false, maxChars: null, noStructure: false, help: false, error: '' };
+  const result = { file: null, json: false, maxChars: null, noStructure: false, type: null, help: false, error: '' };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '-h' || arg === '--help') {
@@ -192,6 +210,16 @@ function parseArgs(argv) {
     }
     if (arg === '--no-structure') {
       result.noStructure = true;
+      continue;
+    }
+    if (arg === '--type') {
+      const value = argv[i + 1];
+      i += 1;
+      if (value === undefined || value.startsWith('-')) {
+        result.error = '--type 需要一个文体名（如 通知 / 公告 / 总结 / 讲话）';
+        continue;
+      }
+      result.type = value;
       continue;
     }
     if (arg === '--max-chars') {
@@ -404,7 +432,8 @@ function checkConsistency(text, isMarkdown) {
  * - 片段补写任务不应直接跑本脚本（S5 已规定），故不设"片段豁免"开关；
  * - 缺项一律 error 级，因为 G4a 是阻断门禁。
  */
-function checkStructure(text, isMarkdown) {
+function checkStructure(text, isMarkdown, opts) {
+  const options = opts || {};
   const issues = [];
   const lines = text.split(/\r?\n/).map((l) => (isMarkdown ? l.replace(/^#{1,6}\s+/, '') : l).trim());
   const body = lines.filter(Boolean);
@@ -421,43 +450,56 @@ function checkStructure(text, isMarkdown) {
     });
   }
 
-  // 1) 标题：首段须含法定文种名
-  const legalTypes = ['决议', '决定', '命令', '公报', '公告', '通告', '意见', '通知', '通报',
-    '报告', '请示', '批复', '议案', '函', '纪要'];
+  // ---- 0) 定文体：显式 --type 优先，其次按标题推断；推断不出按"未知"从严 ----
   const first = body[0] || '';
-  const hasType = legalTypes.some((t) => first.endsWith(t) || first.includes(t));
-  if (!hasType) {
-    issues.push({
-      line: 1, code: 'STRUCT_TITLE', severity: 'error',
-      message: '首段未含 15 个法定文种名之一，标题三要素（发文机关＋事由＋文种）不成立',
-    });
+  // 标题可能两行（主标题＋副标题，如"…经验做法"），故取前两段推断
+  const resolved = resolveGenre(options.type, body.slice(0, 2));
+  const rules = resolved.rules;
+
+  // 1) 标题：法定文种须含文种名；事务材料不套此要求
+  if (!rules || rules.title) {
+    const words = (rules && rules.titleWords) || LEGAL_TYPES;
+    const hasType = words.some((t) => first.endsWith(t) || first.includes(t));
+    if (!hasType) {
+      issues.push({
+        line: 1, code: 'STRUCT_TITLE', severity: 'error',
+        message: '首段未含法定文种名，标题三要素（发文机关＋事由＋文种）不成立；' +
+          '若属事务材料（讲话／总结／述职／方案／调研报告／经验材料／汇报／会议材料），加 --type 指定，不要硬套公文文种',
+      });
+    }
   }
 
-  // 2) 主送机关：须有一段以冒号结尾且不含句末标点；整行占位可替代
-  //    v0.8.0：排除"如下："类导语，避免导语顶替主送机关导致漏报
-  const hasRecipient = body.some((l, i) => isRecipientLine(l, i));
-  if (!hasRecipient) {
+  // 2) 主送机关（公布性文种、纪要与事务材料不要求）
+  const recipientIdx = body.findIndex((l, i) => isRecipientLine(l, i));
+  if (rules && rules.recipient && recipientIdx < 0) {
     issues.push({
       line: 0, code: 'STRUCT_RECIPIENT', severity: 'error',
-      message: '未找到主送机关（应为独立一段、以全角冒号结尾）；公布性文种确实无主送时请人工确认，暂缺时用【待补：主送机关】单独成行占位',
+      message: '未找到主送机关（应为独立一段、以全角冒号结尾）；' +
+        '暂缺时用【待补：主送机关】单独成行占位。公布性文种与纪要不设此项',
+    });
+  }
+  // 2b) 主送末尾须全角冒号（doctype 无关，出现即查；与 05-format.md 第九节同口径）
+  if (recipientIdx >= 0 && /:\s*$/.test(body[recipientIdx])) {
+    issues.push({
+      line: 0, code: 'RECIPIENT_COLON_HALF', severity: 'error',
+      message: '主送机关末尾应使用全角冒号「：」，当前为半角「:」',
     });
   }
 
-  // 3) 成文日期：须有 YYYY年M月D日 形态，或整行的日期占位
-  //    v0.8.0：占位不再判缺项——报错文案要求用占位，却因占位报错，逻辑自相矛盾
+  // 3) 成文日期（纪要、事务材料不要求）
   const dateRe = /(19|20)\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日/;
   const dateLine = body.findIndex((l) => dateRe.test(l));
   const dateSlot = dateLine >= 0 ? dateLine : body.findIndex((l) => isPlaceholderAbout(l, DATE_PLACEHOLDER_RE));
-  if (dateSlot < 0) {
+  const needDate = !rules || rules.date !== false;
+  if (needDate && dateSlot < 0) {
     issues.push({
       line: 0, code: 'STRUCT_DATE', severity: 'error',
       message: '未找到成文日期（应形如 2026年11月15日，月日不编虚位）；未提供时用【待补：成文日期】单独成行占位，不自拟',
     });
   }
 
-  // 4) 落款：日期之前须有一段短语作发文机关署名
-  //    v0.8.0：整行署名占位合法；日期为占位时允许署名占位与日期占位顺序颠倒
-  if (dateSlot > 0) {
+  // 4) 落款（跟随日期；日期不要求时不单独判）
+  if (needDate && dateSlot > 0) {
     const prev = body[dateSlot - 1];
     let looksSignature = isPlaceholderAbout(prev, SIGNATURE_PLACEHOLDER_RE)
       || (!!prev && prev.length <= 30 && !/[。；，：！？]$/.test(prev)
@@ -474,16 +516,21 @@ function checkStructure(text, isMarkdown) {
     }
   }
 
-  // 5) 结语：法定文种通常须有结语（特此通知／妥否请批示／特此报告等）
-  const closingRe = /(特此(通知|报告|批复|函告|公告|通告|通报|说明)|此复|妥否[，,]\s*请批示|当否[，,]\s*请批复|请予批复|以上报告[，,]\s*请审阅)/;
-  if (!closingRe.test(text)) {
+  // 5) 结语（v0.8.1：与 detect.js 共用一份 CLOSING_RE，避免文本层比版式层窄）
+  if (rules && rules.closing && !hasClosing(text)) {
     issues.push({
       line: 0, code: 'STRUCT_CLOSING', severity: 'warn',
-      message: '未找到结语（如“特此通知”“妥否，请批示”“特此报告”），请确认与文种匹配',
+      message: '未找到结语（如“特此通知”“妥否，请批示”“特此函达”），请确认与文种匹配',
     });
   }
 
   return issues;
+}
+
+
+/** 结语判定：与 detect.js 同一份正则，逐行扫（该正则锚定行首） */
+function hasClosing(text) {
+  return String(text || '').split(/\r?\n/).some((l) => CLOSING_RE.test(l.trim()));
 }
 
 function main() {
@@ -495,6 +542,13 @@ function main() {
   if (args.error) {
     process.stderr.write(args.error + '\n');
     return 2;
+  }
+  if (args.type) {
+    if (!isSupportedType(args.type)) {
+      process.stderr.write('未知文体：' + args.type + '（可用：' +
+        LEGAL_TYPES.concat(AFFAIR_TYPES).join('、') + '）\n');
+      return 2;
+    }
   }
   if (!args.file) {
     process.stderr.write('缺少输入文件。使用 --help 查看用法。\n');
@@ -520,7 +574,7 @@ function main() {
 
   const { issues, chars } = scanLines(text, isMarkdown);
   if (!args.noStructure) {
-    checkStructure(text, isMarkdown).forEach((i) => issues.push(i));
+    checkStructure(text, isMarkdown, { type: args.type }).forEach((i) => issues.push(i));
     checkConsistency(text, isMarkdown).forEach((i) => issues.push(i));
   }
 

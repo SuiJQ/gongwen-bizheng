@@ -4,7 +4,7 @@
 
 覆盖法定 15 文种（决议、决定、命令、公报、公告、通告、意见、通知、通报、报告、请示、批复、议案、函、纪要），以及领导讲话、工作总结、述职报告、方案规划、调研报告、经验材料、工作汇报、会议材料、工作小结。
 
-`v0.8.0` · `GPL-3.0-only` · `Node ≥ 18` · `Windows / Linux / macOS` · `106 项回归`
+`v0.8.1` · `GPL-3.0-only` · `Node ≥ 18` · `Windows / Linux / macOS` · `113 项回归`
 
 - **要「判得对」用本包**：文种、行文关系、政策依据、格式合规
 - **要「写得像」用风格类技能**：本包不替代语料统计与去 AI 腔
@@ -140,7 +140,7 @@ S0 识别与路由 → S1 采集与锁定 →【确认点① 骨架/方向】
 | 未知事实 | `[未知：缺什么]` | 起草期标注，交付前转交付占位 |
 | 交付占位 | `【待补：…】`、`【待核：…】`、`【待核对原文：…】`、`【版式未核：…】` | 净稿保留，正式导出前必须清零或改「待核版」 |
 
-**必须整行**：占位单独成段（`【待补：成文日期】`），机检视为「位置已声明、内容待补」，不判缺项，并按其归属要素（日期／落款／主送）套版；与正文混排（`为做好工作。【待补：成文日期】`）仍判要素缺项。
+**必须整行**：占位单独成段（`【待补：成文日期】`）。**日期／署名／主送**三类整行占位视为「位置已声明、内容待补」，不判缺项，并按归属要素套版；标题与结语的占位、以及一切与正文混排的占位，仍判要素缺项。
 
 `check_format.js` 会扫描以上全部标识与 `TODO`/`TBD`。
 
@@ -216,12 +216,14 @@ S0 识别与路由 → S1 采集与锁定 →【确认点① 骨架/方向】
 
 **晋升**：复现 2 次升「高」并合并；复现 3 次以上且与国标一致，**提请用户同意**后才写入 `references/`；12 个月未复现标「待复核」。经验库不得覆盖硬规则，冲突时以 `07-review.md` 为准。
 
-> ⚠️ **`experience/` 是你个人的本地资产，不属于技能包**：不进 git、不进发布快照、不随技能分发。**重装或覆盖升级前请先备份该目录**，否则升级会连同技能目录一起替换。
+> ⚠️ **`experience/` 是你个人的本地资产，不属于技能包**：经验条目（`E-*.md`）不进 git、不随技能分发，`README.md`／`INDEX.md` 仅作目录骨架随包提供（改它们会进 git）。**重装或覆盖升级前请先备份该目录**，否则升级会连同技能目录一起替换。
 
 ## 已知边界
 
 - 不处理 `.doc` / `.wps`（需 Office/WPS 的 COM）；不做版头、版记、印章；不做修订痕迹与表格智能对齐。
-- 机检覆盖页边距、字体字号、行距、缩进对齐、结构空行、要素齐全、文字层序数与日期、文档属性痕迹；**不覆盖页码、印章、版头与版记**——这几项须人工核对或记「无法判定·降级」。
+- 机检覆盖页边距、字体字号、行距、缩进对齐、结构空行、文字层序数与日期、文档属性痕迹；**不覆盖页码、印章、版头与版记**——这几项须人工核对或记「无法判定·降级」。
+- **要素检查按文种分流（v0.8.1）**：公布性文种（公告/通告/公报）、决议、命令、纪要不要求主送，纪要与 8 类事务材料不要求成文日期，事务材料不要求标题含法定文种名。文种用 `--type` 显式传入最稳；不传则按标题后缀推断（事务材料先判，避免「…的调研报告」被「报告」截胡）。
+- **流程规则是文档级约束，不是运行时钩子**：排版固定工序、梦境入库由 `SKILL.md` 与文档一致性测试锁住，能防规则回滚，不能证明每次执行都发生。
 - 纯文本环境下不要宣称「版式已通过」，只能记降级。
 - 输出字体需系统存在：Linux 上缺「方正小标宋简体」「仿宋_GB2312」时 Word 会回退字体，须在目标机复核。
 - 表格：Markdown 表格导出 DOCX 会退化为带竖线的正文（脚本明确告警，不静默降级）；要保表格请用 `format_docx.js` 处理已有 docx。
@@ -244,7 +246,7 @@ S0 识别与路由 → S1 采集与锁定 →【确认点① 骨架/方向】
 
 ```bash
 # 文本层机检：退出码 0 通过 / 1 有待处理项 / 2 参数或读取错误
-node scripts/check_format.js <正文.md|txt|docx> --json [--max-chars N]
+node scripts/check_format.js <正文.md|txt|docx> --json [--type 文体] [--max-chars N]
 
 # 句式节奏：只检测不改写（句长 CV、同构并列、等长并列）
 node scripts/check_rhythm.js <正文.md|txt> --json
@@ -257,7 +259,7 @@ node scripts/format_docx.js analyze <来文.docx> --json
 node scripts/format_docx.js smart   <来文.docx> <出.docx> [--author 姓名] [--force]
 node scripts/format_docx.js format|meta <输入.docx> <输出.docx> [--force]
 
-# 全量回归（5 套 106 项，任一失败即整体失败）
+# 全量回归（5 套 113 项，任一失败即整体失败）
 npm test
 ```
 
@@ -286,15 +288,15 @@ references/                     按需读取，禁止预加载（触发条件见
   12-redlines.md                政治与合规红线（v0.5.0）
   13-experience.md              记忆梦境：经验提炼协议（v0.6.0）
 scripts/
-  check_format.js               文本层格式／占位符机检
+  check_format.js               文本层格式／占位符机检（--type 按文体分流要素要求）
   check_rhythm.js               句式节奏检测（只检测不改写）
   export_docx.js                净稿导出 DOCX
   format_docx.js                版式修复／元数据清理／只读诊断入口
-  docformat/                    版式能力实现，13 个模块（zip、docpkg、xml、detect、ppr、format、structure、clean、meta、diagnose、preset、index、textio）
+  docformat/                    版式能力实现，14 个模块（zip、docpkg、xml、detect、genre、ppr、format、structure、clean、meta、diagnose、preset、index、textio）
 tests/
   run_all.js                    全量入口：逐套 spawn 后汇总（v0.7.2）
   docformat_test.js             版式能力回归（38 项）
-  gate_test.js                  门禁有效性回归（37 项）
+  gate_test.js                  门禁有效性回归（44 项）
   robustness_test.js            畸形输入与健壮性回归（11 项）
   rhythm_test.js                句式节奏回归（9 项）
   crossplatform_test.js         跨平台回归（11 项）
@@ -309,7 +311,7 @@ experience/                     本地经验库（个人资产，不入库、不
 
 > 本节面向维护者。普通使用者读完「30 秒上手」即可。
 
-**测试**：`npm test` 跑 `tests/run_all.js`，五套共 **106 项**（38 + 37 + 11 + 9 + 11），逐套 spawn、失败不短路。
+**测试**：`npm test` 跑 `tests/run_all.js`，五套共 **113 项**（38 + 44 + 11 + 9 + 11），逐套 spawn、失败不短路。
 
 **验收脚本（开发目录自用，未随包分发）**：`tools/verify.py` 当前 116 项，含 4 个影子任务走查、导出产物自检回归、两条路径页脚一致性回归、五套 Node 回归的项数一致性（README 声明的项数与实际 PASS 数必须相等）、README 测试清单／脚本数／基线列表／验收项数覆盖、安装目录无版本控制元数据、资源索引覆盖全部 14 个 reference 子文件；另有断言校验 pPr 子元素顺序符合 CT_PPrBase、`package.json` 版本与 frontmatter 一致、CHANGELOG 版本段唯一、`experience/` 无越界文件且条目含七项字段。缺陷与观察项闭合核验见 `tools/verify_issues.py`（22 条）。
 
@@ -331,11 +333,12 @@ experience/                     本地经验库（个人资产，不入库、不
 - v0.7.1：`baseline-v0.7.1.json`（42 文件，文档陈欠修复）
 - v0.7.2：`baseline-v0.7.2.json`（45 文件，+`textio.js`、`crossplatform_test.js`、`run_all.js`）——**待用 `tools/verify.py` 在开发机重生成**
 - v0.7.3：仅 README／CHANGELOG 调整，**代码与文件数不变（45）**，不新增基线
-- v0.8.0：`baseline-v0.8.0.json`（45 文件，占位符判据 + 排版固定工序 + 梦境门槛；`gate_test.js` 23 → 37 项）——**待用 `tools/verify.py` 在开发机重生成**
+- v0.8.0：`baseline-v0.8.0.json`（45 文件，占位符判据 + 排版固定工序 + 梦境门槛；`gate_test.js` 23 → 37 项）
+- v0.8.1：`baseline-v0.8.1.json`（46 文件，+`docformat/genre.js`；文种分流、结语判据合并、主送半角冒号；`gate_test.js` 37 → 44 项）——**待用 `tools/verify.py` 在开发机重生成**
 
 **回滚**：以对应快照整包覆盖安装目录，并按相应 `baseline-*.json` 校验文件数与 SHA-256；跨多个版本回滚时按 CHANGELOG 逐版执行增删文件（例如回滚到 v0.4.2 需删 `references/11-vocab.md` 并还原三个文件的索引行；回滚到 v0.3.0 需移除 `scripts/format_docx.js` 与 `scripts/docformat/`）。触发条件：影子任务任一阶段缺失、脚本退出码异常、路径引用断链，或判定证据／确认点／降级纪律被削弱。
 
-**版本字段**：内建规范要求 frontmatter 只含 `name` 与 `description`；平台对 `metadata.version` 的识别规则未统一，因此本包保留该字段并逐版推进（当前 0.8.0），同时在 `package.json` 与本文写明版本，不臆造顶层 `version` 字段。已实测含 `license`／`metadata` 的技能可正常加载。
+**版本字段**：内建规范要求 frontmatter 只含 `name` 与 `description`；平台对 `metadata.version` 的识别规则未统一，因此本包保留该字段并逐版推进（当前 0.8.1），同时在 `package.json` 与本文写明版本，不臆造顶层 `version` 字段。已实测含 `license`／`metadata` 的技能可正常加载。
 
 **上游**：`github.com/SuiJQ/gongwen-bizheng`（GPL-3.0-only）。逐版文件清单与 SHA-256、git blob 校验记录见 CHANGELOG。
 
