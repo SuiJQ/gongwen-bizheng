@@ -116,6 +116,83 @@ test('--no-structure 可跳过结构检查（供片段补写用）', () => {
   assert.strictEqual(structIssues.length, 0, '仍报结构项：' + JSON.stringify(structIssues));
 });
 
+// ------------------------------------------------- v0.8.0 占位符判据（G4a）
+// 历史缺陷：结构检查只认 `YYYY年M月D日` 数字形态，而报错文案却要求"未提供时用
+// 【待补：成文日期】占位"——照做反而被判 STRUCT_DATE 不通过。以下用例锁住闭环。
+
+test('日期用【待补：成文日期】占位时不判缺项（曾报 STRUCT_DATE）', () => {
+  const text = GOOD.replace('2026年11月15日', '【待补：成文日期】');
+  const r = check(write('ph-date.txt', text));
+  assert.strictEqual(r.json.issues.filter((i) => i.code === 'STRUCT_DATE').length, 0,
+    JSON.stringify(r.json.issues));
+});
+
+test('【待核：成文日期】与【待补】同等待遇', () => {
+  const text = GOOD.replace('2026年11月15日', '【待核：成文日期】');
+  const r = check(write('ph-date-check.txt', text));
+  assert.strictEqual(r.json.issues.filter((i) => i.code === 'STRUCT_DATE').length, 0,
+    JSON.stringify(r.json.issues));
+});
+
+test('署名用【待补：发文机关署名】占位时不判"不像署名"', () => {
+  const text = GOOD.replace('××市人民政府', '【待补：发文机关署名】');
+  const r = check(write('ph-sig.txt', text));
+  assert.strictEqual(r.json.issues.filter((i) => i.code === 'STRUCT_SIGNATURE').length, 0,
+    JSON.stringify(r.json.issues));
+});
+
+test('主送用【待补：主送机关】占位（不带冒号）时不判缺项', () => {
+  const text = GOOD.replace('各区县人民政府：', '【待补：主送机关】');
+  const r = check(write('ph-rec.txt', text));
+  assert.strictEqual(r.json.issues.filter((i) => i.code === 'STRUCT_RECIPIENT').length, 0,
+    JSON.stringify(r.json.issues));
+});
+
+test('署名与日期同为占位、且顺序颠倒时仍不判缺项', () => {
+  const text = GOOD.replace('××市人民政府\n\n2026年11月15日',
+    '【待补：成文日期】\n\n【待补：发文机关署名】');
+  const r = check(write('ph-both.txt', text));
+  const structs = r.json.issues.filter((i) => i.code === 'STRUCT_DATE' || i.code === 'STRUCT_SIGNATURE');
+  assert.strictEqual(structs.length, 0, JSON.stringify(r.json.issues));
+});
+
+test('占位不等于通过：占位稿仍 exit 1 并报 PLACEHOLDER', () => {
+  const text = GOOD.replace('2026年11月15日', '【待补：成文日期】');
+  const r = check(write('ph-still-pending.txt', text));
+  assert.strictEqual(r.code, 1, '占位稿应仍为待处理');
+  assert.ok(r.json.issues.some((i) => i.code === 'PLACEHOLDER'), JSON.stringify(r.json.issues));
+});
+
+test('与正文混排的占位不享受豁免（仍判缺项）', () => {
+  const text = GOOD.replace('2026年11月15日', '为做好工作。【待补：成文日期】');
+  const r = check(write('ph-inline.txt', text));
+  assert.ok(r.json.issues.some((i) => i.code === 'STRUCT_DATE'), JSON.stringify(r.json.issues));
+});
+
+test('导语「如下：」不得顶替主送机关（曾漏报 STRUCT_RECIPIENT）', () => {
+  const text = GOOD.replace('各区县人民政府：\n\n', '')
+    .replace('现就有关事项通知如下。', '现就有关事项通知如下：');
+  const r = check(write('lead-colon.txt', text));
+  assert.ok(r.json.issues.some((i) => i.code === 'STRUCT_RECIPIENT'), JSON.stringify(r.json.issues));
+});
+
+test('DOCX 侧：日期占位不报 ELEMENT_DATE/ELEMENT_SIGNATURE，改报 ELEMENT_PENDING', () => {
+  const text = GOOD.replace('2026年11月15日', '【待补：成文日期】');
+  const src = write('ph-export.txt', text);
+  const out = path.join(TMP, 'ph-export.docx');
+  const ex = spawnSync(process.execPath, [EXPORT, src, out], { encoding: 'utf8' });
+  assert.strictEqual(ex.status, 0, 'export 失败：' + ex.stderr);
+  const an = spawnSync(process.execPath,
+    [path.join(ROOT, 'scripts', 'format_docx.js'), 'analyze', out, '--json'], { encoding: 'utf8' });
+  let j = null;
+  try { j = JSON.parse(an.stdout); } catch (e) { /* ignore */ }
+  assert.ok(j, 'analyze 未输出 JSON：' + an.stderr);
+  const codes = j.issues.map((i) => i.code);
+  assert.ok(!codes.includes('ELEMENT_DATE'), '仍报 ELEMENT_DATE：' + JSON.stringify(codes));
+  assert.ok(!codes.includes('ELEMENT_SIGNATURE'), '仍报 ELEMENT_SIGNATURE：' + JSON.stringify(codes));
+  assert.ok(codes.includes('ELEMENT_PENDING'), '未报 ELEMENT_PENDING：' + JSON.stringify(codes));
+});
+
 // ---------------------------------------------------------------- P0-3
 test('「一.」式序数必须被识别（曾完全不报）', () => {
   const text = GOOD.replace('一、总体要求', '一.总体要求').replace('二、工作要求', '二.工作要求');
@@ -247,6 +324,47 @@ test('节奏检测阈值不沿用网文基线（CV_MIN 须 <0.2）', () => {
   assert.ok(j && j.baseline, '未输出 baseline');
   assert.ok(j.baseline.CV_MIN < 0.2,
     'CV_MIN=' + j.baseline.CV_MIN + ' 偏大，疑沿用网文阈值 0.55');
+});
+
+// ------------------------------------------------- v0.8.0 排版工序 / 梦境（文档判据）
+// 这两条是流程规则，没有运行时钩子；用文档一致性用例锁住，防止下一版又把口子开回去。
+
+test('S5 排版为固定工序，顺序为 export → smart', () => {
+  const skill = fs.readFileSync(path.join(ROOT, 'SKILL.md'), 'utf8');
+  const stages = fs.readFileSync(path.join(ROOT, 'references', '00-stages.md'), 'utf8');
+  assert.ok(/S5 固定工序/.test(skill), 'SKILL 未把排版写成 S5 固定工序');
+  assert.ok(/不再征求同意/.test(skill), 'SKILL 未声明不再征求同意');
+  const s5 = stages.slice(stages.indexOf('## S5 交付'), stages.indexOf('## S6'));
+  const iExport = s5.indexOf('export_docx.js');
+  const iSmart = s5.indexOf('format_docx.js smart');
+  assert.ok(iExport > 0 && iSmart > 0, 'S5 未同时包含 export 与 smart：' + [iExport, iSmart]);
+  assert.ok(iExport < iSmart, 'S5 顺序错误：应先导出再排版');
+});
+
+test('旧的「问一句等同意」话术已移除', () => {
+  const skill = fs.readFileSync(path.join(ROOT, 'SKILL.md'), 'utf8');
+  assert.ok(!/回一句「排版」即可/.test(skill), '仍保留"回一句排版即可"话术');
+  assert.ok(!/用户未同意前不得执行/.test(skill), '仍保留"未同意前不得执行"的禁令');
+});
+
+test('梦境不得留「或」字逃生口', () => {
+  const skill = fs.readFileSync(path.join(ROOT, 'SKILL.md'), 'utf8');
+  assert.ok(!/或已写明哪一问未过/.test(skill), '检查清单仍可"说明一句"就免除写入');
+  assert.ok(/不得只写/.test(skill), '检查清单未禁止"无可沉淀"式结案');
+});
+
+test('入库四问已替代「非孤例」门槛', () => {
+  const exp = fs.readFileSync(path.join(ROOT, 'references', '13-experience.md'), 'utf8');
+  assert.ok(/非抄书/.test(exp), '四问未改为 可脱离/可判定/有出处/非抄书');
+  assert.ok(!/非孤例/.test(exp), '仍保留"非孤例"门槛（首次经验无法入库）');
+  assert.ok(/首次即可入库|首次出现/.test(exp), '未声明首次即可入库');
+});
+
+test('经验写入不等用户确认，记忆文件仍须确认', () => {
+  const stages = fs.readFileSync(path.join(ROOT, 'references', '00-stages.md'), 'utf8');
+  const s6 = stages.slice(stages.indexOf('## S6 记忆沉淀'));
+  assert.ok(/不等用户确认/.test(s6), 'S6 未写明经验条目不等待确认');
+  assert.ok(/记忆文件/.test(s6) && /请用户确认/.test(s6), 'S6 未区分记忆文件仍需确认');
 });
 
 // ------------------------------------------------------------------ 汇总

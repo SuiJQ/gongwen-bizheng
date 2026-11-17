@@ -26,6 +26,31 @@ const HEADING3_RE = /^\s*\d{1,2}\s*[.．、]/;
 const HEADING4_RE = /^\s*[（(]\s*\d{1,2}\s*[)）]/;
 const TITLE_RE = /^.{2,60}(通知|决定|意见|报告|请示|批复|函|通报|纪要|方案|办法|规定|细则|公告|通告|决议|议案|命令|公报)$/;
 
+/**
+ * 整行受控占位：【待补：…】【待核：…】【待核对原文：…】【版式未核：…】，且整段只有这一个占位。
+ *
+ * v0.8.0：占位是 05-format.md 的合法中间态，必须与"要素缺失"区分开。
+ * 以前占位段落一律落进 body，等宽诊断报"未识别到成文日期／署名"，
+ * 与 check_format 的 STRUCT_DATE／STRUCT_SIGNATURE 形成同源双误报。
+ * 这里按占位主题映射回要素类型，使 G4a 与 G4b 同一口径，并让排版把占位放回它该在的位置。
+ */
+const PLACEHOLDER_LINE_RE = /^【\s*(待补|待核|待核对原文|版式未核)\s*[：:][^】]*】$/;
+const PLACEHOLDER_KINDS = [
+  { type: 'date', re: /(成文日期|发文日期|签发日期|印发日期)/ },
+  { type: 'signature', re: /(发文机关署名|署名|落款)/ },
+  { type: 'recipient', re: /(主送机关|主送单位|受文机关|受文单位|主送|受文)/ },
+];
+
+/** 整行占位命中的要素类型；不是占位或主题不明时返回 null */
+function placeholderType(text) {
+  const t = (text || '').trim();
+  if (!PLACEHOLDER_LINE_RE.test(t)) return null;
+  for (const k of PLACEHOLDER_KINDS) {
+    if (k.re.test(t)) return k.type;
+  }
+  return null;
+}
+
 /** 是否以冒号结尾（全角/半角） */
 function endsWithColon(text) {
   return /[：:]\s*$/.test(text);
@@ -69,7 +94,11 @@ function detectType(ctx) {
   // 3. 抄送
   if (CC_RE.test(text)) return 'cc';
 
-  // 4. 成文日期：形态严格匹配，且需右对齐或位于文末区佐证
+  // 4. 整行占位：要素位置已声明、内容待补，按占位主题归位
+  const phType = placeholderType(text);
+  if (phType) return phType;
+
+  // 5. 成文日期：形态严格匹配，且需右对齐或位于文末区佐证
   if (DATE_RE.test(text) && (align === 'right' || tail2)) return 'date';
 
   // 5. 主送机关：以冒号收尾的短行，且不是"如下："这类引导语
@@ -138,6 +167,7 @@ module.exports = {
   detectType,
   refineTypes,
   isHeading,
+  placeholderType,
   DATE_RE,
   DOC_NUMBER_RE,
   ATTACH_NOTE_RE,
@@ -146,4 +176,5 @@ module.exports = {
   HEADING2_RE,
   HEADING3_RE,
   HEADING4_RE,
+  PLACEHOLDER_LINE_RE,
 };

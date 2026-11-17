@@ -32,6 +32,57 @@ const PLACEHOLDERS = [
   'TODO', 'TBD',
 ];
 
+/**
+ * 整行占位符：一行只有一个受控占位，没有别的文字。
+ *
+ * 与 `05-format.md` 的交付占位语法同源（【待补：…】【待核：…】【待核对原文：…】【版式未核：…】）。
+ * 只有这种"整行占位"才算"要素位置已声明、内容待补"；与正文混排的不算，
+ * 因为混排占位既不能定位、也不能直接排版替换。
+ *
+ * v0.8.0：此前结构检查只认 `YYYY年M月D日` 数字形态，报错文案却要求"未提供时用
+ * 【待补：成文日期】占位"——按提示做了反而被判 STRUCT_DATE 不通过（同一份稿子
+ * 在机检层永远过不去）。占位符判据与占位语法就此脱钩，本版补上闭环。
+ */
+const PLACEHOLDER_LINE_RE = /^【\s*(待补|待核|待核对原文|版式未核)\s*[：:][^】]*】$/;
+const DATE_PLACEHOLDER_RE = /(成文日期|发文日期|签发日期|印发日期|日期)/;
+const SIGNATURE_PLACEHOLDER_RE = /(发文机关署名|署名|落款|发文机关)/;
+const RECIPIENT_PLACEHOLDER_RE = /(主送机关|主送单位|受文机关|受文单位|主送|受文)/;
+
+/** 整行占位（不含前后空白） */
+function isPlaceholderLine(line) {
+  return PLACEHOLDER_LINE_RE.test((line || '').trim());
+}
+
+function isPlaceholderAbout(line, re) {
+  return isPlaceholderLine(line) && re.test((line || '').trim());
+}
+
+/**
+ * 导语收尾，不是主送机关。
+ *
+ * 「现将有关事项通知如下：」「具体安排如下：」这类句子以冒号收尾、长度也合规，
+ * 曾被误当成主送机关，从而把"主送真缺失"漏报掉（v0.8.0 修）。
+ */
+const RECIPIENT_LEAD_RE = /(如下|下列|以下|下同|通知如下|报告如下|请示如下|函告如下)\s*[：:]$/;
+
+/**
+ * 主送机关行的统一判据（v0.8.0）。
+ *
+ * 同一判据被"要素存在性检查"与"主送-正文层级一致性检查"共用：
+ * 两处各写一遍必然漂移（诊断报的不修、修了的不报），故收敛为一个函数。
+ */
+function isRecipientLine(line, index) {
+  if (index === 0) return false;
+  const l = (line || '').trim();
+  if (!l) return false;
+  if (isPlaceholderAbout(l, RECIPIENT_PLACEHOLDER_RE)) return true;
+  if (!/[：:]\s*$/.test(l) || l.length > 60 || /[。！？；]/.test(l)) return false;
+  if (RECIPIENT_LEAD_RE.test(l)) return false;
+  if (/^[（(]\s*[一二三四五六七八九十\d]+\s*[)）]/.test(l)) return false;
+  if (/^[一二三四五六七八九十]+\s*、/.test(l)) return false;
+  return true;
+}
+
 const LINE_CHECKS = [
   { code: 'SERIAL_DUNHAO', re: /^\s*\d+、/, msg: '层级序数应为“1.”（下脚点），不是“1、”' },
   { code: 'SERIAL_HANJU', re: /^\s*[一二三四五六七八九十]+[.．]/, msg: '第一层序数应为“一、”（顿号），不是“一.”或“一．”' },
@@ -311,7 +362,7 @@ function checkConsistency(text, isMarkdown) {
 
   // ---- B. 主送与正文受文范围一致性 ----
   const bodyStart = lines.findIndex((l) => l && !/[：:]$/.test(l));
-  const recipientIdx = lines.findIndex((l, i) => i > 0 && /[：:]$/.test(l) && l.length <= 60 && !/[。！？；]/.test(l));
+  const recipientIdx = lines.findIndex((l, i) => isRecipientLine(l, i));
   if (recipientIdx > 0) {
     const recipientLevel = detectAdminLevel(lines[recipientIdx]);
     if (recipientLevel) {
@@ -348,6 +399,8 @@ function checkConsistency(text, isMarkdown) {
  *
  * 判定口径：
  * - 只查"在不在"，不查"写得对不对"（后者归 G4a 内容层与人工）；
+ * - 整行的受控占位（【待补：成文日期】等）视为"位置已声明、内容待补"，不判缺项，
+ *   由 PLACEHOLDER 项按"待处理"计；与正文混排的占位不享受此待遇（v0.8.0）；
  * - 片段补写任务不应直接跑本脚本（S5 已规定），故不设"片段豁免"开关；
  * - 缺项一律 error 级，因为 G4a 是阻断门禁。
  */
@@ -380,34 +433,43 @@ function checkStructure(text, isMarkdown) {
     });
   }
 
-  // 2) 主送机关：须有一段以冒号结尾且不含句末标点
-  const hasRecipient = body.some((l, i) => i > 0 && /[：:]\s*$/.test(l) && l.length <= 60 && !/[。！？；]/.test(l));
+  // 2) 主送机关：须有一段以冒号结尾且不含句末标点；整行占位可替代
+  //    v0.8.0：排除"如下："类导语，避免导语顶替主送机关导致漏报
+  const hasRecipient = body.some((l, i) => isRecipientLine(l, i));
   if (!hasRecipient) {
     issues.push({
       line: 0, code: 'STRUCT_RECIPIENT', severity: 'error',
-      message: '未找到主送机关（应为独立一段、以全角冒号结尾）；公布性文种确实无主送时请人工确认',
+      message: '未找到主送机关（应为独立一段、以全角冒号结尾）；公布性文种确实无主送时请人工确认，暂缺时用【待补：主送机关】单独成行占位',
     });
   }
 
-  // 3) 成文日期：须有 YYYY年M月D日 形态
+  // 3) 成文日期：须有 YYYY年M月D日 形态，或整行的日期占位
+  //    v0.8.0：占位不再判缺项——报错文案要求用占位，却因占位报错，逻辑自相矛盾
   const dateRe = /(19|20)\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日/;
   const dateLine = body.findIndex((l) => dateRe.test(l));
-  if (dateLine < 0) {
+  const dateSlot = dateLine >= 0 ? dateLine : body.findIndex((l) => isPlaceholderAbout(l, DATE_PLACEHOLDER_RE));
+  if (dateSlot < 0) {
     issues.push({
       line: 0, code: 'STRUCT_DATE', severity: 'error',
-      message: '未找到成文日期（应形如 2026年11月15日，月日不编虚位）；未提供时应用【待补：成文日期】占位',
+      message: '未找到成文日期（应形如 2026年11月15日，月日不编虚位）；未提供时用【待补：成文日期】单独成行占位，不自拟',
     });
   }
 
   // 4) 落款：日期之前须有一段短语作发文机关署名
-  if (dateLine > 0) {
-    const prev = body[dateLine - 1];
-    const looksSignature = prev && prev.length <= 30 && !/[。；，：！？]$/.test(prev)
-      && !/^[（(]/.test(prev) && !/^【/.test(prev);
+  //    v0.8.0：整行署名占位合法；日期为占位时允许署名占位与日期占位顺序颠倒
+  if (dateSlot > 0) {
+    const prev = body[dateSlot - 1];
+    let looksSignature = isPlaceholderAbout(prev, SIGNATURE_PLACEHOLDER_RE)
+      || (!!prev && prev.length <= 30 && !/[。；，：！？]$/.test(prev)
+        && !/^[（(]/.test(prev) && !isPlaceholderLine(prev));
+    if (!looksSignature && dateLine < 0) {
+      looksSignature = body.slice(Math.max(0, body.length - 3))
+        .some((l) => isPlaceholderAbout(l, SIGNATURE_PLACEHOLDER_RE));
+    }
     if (!looksSignature) {
       issues.push({
         line: 0, code: 'STRUCT_SIGNATURE', severity: 'error',
-        message: '成文日期前一段不像发文机关署名（应为短语、无句末标点）',
+        message: '成文日期前一段不像发文机关署名（应为短语、无句末标点）；暂缺时用【待补：发文机关署名】单独成行占位',
       });
     }
   }

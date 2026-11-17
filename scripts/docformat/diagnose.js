@@ -11,7 +11,7 @@ const {
   scanParagraphs, paragraphText, getJc, getPPr, getFirstLineIndent,
   getLineSpacing, getFirstRunFont, getFirstRunSize, hasMedia, unescapeXml, readTag,
 } = require('./xml');
-const { detectType, refineTypes } = require('./detect');
+const { detectType, refineTypes, placeholderType } = require('./detect');
 const { isGeneratorValue, isAppPlatformMismatch, CORE_PART, APP_PART } = require('./meta');
 
 const CM_TOLERANCE = 0.2;
@@ -199,7 +199,7 @@ function diagnoseParagraphs(pkg, preset, issues) {
   return { types, rows };
 }
 
-function diagnoseElements(types, issues) {
+function diagnoseElements(types, issues, rows) {
   const has = (t) => types.includes(t);
   if (!has('title')) {
     issues.push({ code: 'ELEMENT_TITLE', level: 'error', category: 'structure', message: '未识别到公文标题' });
@@ -210,6 +210,20 @@ function diagnoseElements(types, issues) {
   if (!has('signature')) {
     issues.push({ code: 'ELEMENT_SIGNATURE', level: 'warn', category: 'structure', message: '未识别到发文机关署名（落款）' });
   }
+  // 整行占位不是"缺失"，而是"待补"：记 info，便于交付时逐条对账（v0.8.0）
+  (rows || []).forEach((row) => {
+    const t = placeholderType(row.text);
+    if (!t) return;
+    const label = { date: '成文日期', signature: '发文机关署名', recipient: '主送机关' }[t] || t;
+    issues.push({
+      code: 'ELEMENT_PENDING',
+      level: 'info',
+      category: 'structure',
+      location: '第' + (row.index + 1) + '段',
+      message: label + '为待补占位，未填实；正式件导出前须清零',
+      evidence: '锚点：' + row.text.slice(0, 24),
+    });
+  });
   // 结构空行
   const titleIdx = types.indexOf('title');
   if (titleIdx >= 0 && types[titleIdx + 1] && types[titleIdx + 1] !== 'blank') {
@@ -356,7 +370,7 @@ function diagnose(pkg, preset, options) {
   const opts = options || {};
   const geometry = diagnoseGeometry(pkg, preset, issues);
   const para = diagnoseParagraphs(pkg, preset, issues);
-  diagnoseElements(para.types, issues);
+  diagnoseElements(para.types, issues, para.rows);
   diagnoseText(para.rows, issues);
   diagnoseMetadata(pkg, issues, opts.platform);
 
