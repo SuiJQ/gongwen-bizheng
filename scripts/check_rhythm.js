@@ -19,7 +19,7 @@
  */
 'use strict';
 
-const { readText } = require('./docformat/textio');
+const { readTextWithMeta } = require('./docformat/textio');
 
 const HELP = `用法: node check_rhythm.js <文件.md|txt> [--json]
 
@@ -249,7 +249,15 @@ function main() {
   }
   let text;
   try {
-    text = readText(args.file);
+    const read = readTextWithMeta(args.file);
+    if (read.encoding === 'unknown') {
+      process.stderr.write('无法识别文件编码：既不是 UTF-8，也不是 GB18030。请转存为 UTF-8 后重试。\n');
+      return 2;
+    }
+    if (read.encoding === 'gb18030') {
+      process.stderr.write('提示：输入不是 UTF-8 编码（已按 GB18030 解码）。\n');
+    }
+    text = read.text;
   } catch (e) {
     process.stderr.write('读取失败：' + e.message + '\n');
     return 2;

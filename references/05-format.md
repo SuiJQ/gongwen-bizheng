@@ -28,7 +28,8 @@
 | 份号 | 如需标注，顶格编排在版心左上角第一行 | 6 位 3 号阿拉伯数字 |
 | 密级和保密期限 | 如需标注，顶格编排在版心左上角第二行；保密期限用阿拉伯数字 | 3 号黑体 |
 | 紧急程度 | 如需标注，顶格编排在版心左上角；与份号、密级同时标注时按"份号→密级→紧急程度"分行 | 3 号黑体 |
-| 发文机关标志 | 机关全称或规范化简称加"文件"，也可只用全称/简称；居中，上边缘至版心上边缘 35 mm；联合行文主办机关在前 | 推荐小标宋体，红色 |
+| 发文机关标志 | 机关全称或规范化简称加"文件"，也可只用全称/简称；居中，上边缘至版心上边缘 35 mm（**下行文／平行文**）；联合行文主办机关在前 | 推荐小标宋体，红色 |
+| 上行文留位 | 上行文须标注签发人（《条例》第九条第六项），发文机关标志以下须留出签发人位置，故其垂直位置与下行文不同；**具体数值以 GB/T 9704-2012 7.2.2 原文为准，本表不臆造** | — |
 | 发文字号 | 发文机关标志下空二行，居中；年份用六角括号〔〕，顺序号不编虚位、不加"第"、后加"号"；**上行文发文字号居左空一字，与最后一个签发人姓名同一行** | 3 号仿宋 |
 | 签发人 | "签发人："三字加全角冒号和姓名，**整体居右空一字**；多个签发人按发文机关顺序从左到右、自上而下均匀编排，一般每行两个姓名，回行与上一行第一个姓名对齐 | "签发人"3 号仿宋，姓名 3 号楷体 |
 | 版头分隔线 | 发文字号之下 4 mm，居中，与版心等宽 | 红色 |
@@ -169,3 +170,48 @@
 - 修改说明（修改任务）：`原：… → 改：…｜依据：G6 禁用项`
 - 审核意见（审核任务）：`【必须改】G1｜主送栏｜…`
 - 使用说明：`正文中【待核】处需补齐后方可作为正式件`
+
+## 十一、机检码速查（看到码就知道改哪里）
+
+`check_format.js` 与 `format_docx.js analyze` 的 `code` 共 70+ 个，下表按"会不会改变修订动作"筛选，同族码合并成一行（如 `DATE_*`、`DOC_NO_*`、`SERIAL_*`）；未列出的码看 `message` 即可。
+
+| 码 | 层 | 级别 | 含义 → 动作 |
+|---|---|---|---|
+| `STRUCT_TITLE` | 文本 | error | 标题无文种名 → 补"发文机关＋事由＋文种"；事务材料加 `--type`，不要硬套公文文种 |
+| `STRUCT_RECIPIENT` | 文本 | error | 无主送 → 补主送并单独成段；暂缺写 `【待补：主送机关】` |
+| `RECIPIENT_COLON_HALF` | 文本 | error | 主送末尾半角冒号 → 改全角「：」 |
+| `STRUCT_DATE` / `STRUCT_SIGNATURE` | 文本 | error | 缺日期/署名 → 补写或整行占位；**不许自拟日期** |
+| `STRUCT_CLOSING` | 文本 | warn | 结语缺失或与文种不匹配 → 按 `03-patterns.md` 该文种惯用语改 |
+| `ENCODING_NON_UTF8` | 文本 | warn | 文件是 GBK/GB18030，已自动解码 → 建议转存 UTF-8 后再交付 |
+| `PLACEHOLDER` | 文本 | warn | 仍有占位/标注未清 → 逐条落实或写入注意事项 |
+| `DATE_*`（CN_YEAR/ZERO_MONTH/ZERO_DAY/HAO/SEPARATOR） | 文本 | error | 日期写法不合规 → 阿拉伯数字、月日不编虚位 |
+| `DOC_NO_*`（BRACKET/DI/ZERO） | 文本 | error | 文号格式 → 六角括号〔〕、不编虚位、不加"第" |
+| `SERIAL_*`（HANJU/HALF_PAREN/SKIP_LEVEL/PAREN_PUNCT…） | 文本 | error | 层次序数 → 一、／（一）／1.／（1），不混用 |
+| `PUNCT_*`（EXCLAIM/REPEAT/COLON_HALF/PAREN_HALF） | 文本 | error | 标点 → 按 `06-language.md` 第六节 |
+| `REPORT_ENDING` / `DOC_TYPE_MIX` | 文本 | error | 报告夹带请示语／文种混用 → 拆文或改结语 |
+| `MAX_CHARS` | 文本 | error | 超字数 → 按 `06-language.md` 第十一节压缩 |
+| `PGMAR_MISSING` / `SEC_MISSING` | 版式 | error | 缺页面几何/分节 → 用 `format_docx.js format` 重排 |
+| `FONT_MISMATCH` / `SIZE_MISMATCH` / `LINE_SPACING` / `INDENT_MISSING` | 版式 | error | 字体字号行距缩进行 → 同上，或按本文件第二、三、五节手工改 |
+| `ALIGN_TITLE` / `ALIGN_SIGNATURE` | 版式 | error | 标题应居中、署名日期应右对齐 → 调段落对齐 |
+| `BLANK_AFTER_TITLE` / `BLANK_BEFORE_SIGNATURE` | 版式 | warn | 结构空行缺失 → 补空段（不是加空行符） |
+| `ELEMENT_TITLE` / `ELEMENT_DATE` / `ELEMENT_SIGNATURE` | 版式 | error/warn | 要素未识别 → 按文种补；事务材料与纪要不判日期署名 |
+| `ELEMENT_PENDING` | 版式 | info | 该位置是占位（`【待补…】`）→ 补内容后重跑 |
+| `META_CREATOR` / `META_LASTBY` / `META_DESC` / `META_APP` | 版式 | warn | 生成器痕迹 → `smart` 自动清；`--author` 可改署名 |
+| `META_RSID` / `META_THUMBNAIL` / `META_TOTALTIME` | 版式 | info | 编辑会话/缩略图痕迹 → `smart` 自动清，仅记录 |
+| `META_CUSTOM` | 版式 | info | 有自定义属性（客户编号等）→ **`smart` 不删**，交付前人工确认 |
+| `META_TIME_SAME` / `META_TIME_OLD` / `META_NO_CORE` | 版式 | warn | 时间/属性异常 → 确认是否模板残留 |
+
+| `COPY_REPORT` | 文本 | error | 出现"抄报" → 统一改"抄送" |
+| `ATTACH_COLON_HALF` | 文本 | error | "附件:"半角冒号 → 改全角「：」，名称后不加标点 |
+| `RANGE_TILDE` | 文本 | error | 数值区间用了半角 `~` → 用"至"、一字线或"～" |
+| `NO_BODY_TEXT` | 文本 | error | 标了"此页无正文" → 2012 版不标，调行距字距解决 |
+| `HEADING_START` | 文本 | warn | 正文首段直接进层次标题 → 先补缘由段再分条 |
+| `STRUCT_EMPTY` / `STRUCT_TOO_SHORT` | 文本 | error | 空稿或片段（<30 字）→ 本脚本不适用，补全后重跑 |
+| `CONSIST_RECIPIENT` | 文本 | error | 主送与结尾称谓/分送范围不一致 → 全文对齐 |
+| `CONSIST_AMOUNT` | 文本 | warn | 金额大小写或前后数值不一致 → 逐处核对 |
+| `PAGE_MARGIN` | 版式 | error | 页边距偏离 37/35/28/26 → `format` 重排 |
+| `FONT_INHERITED` | 版式 | warn | 字体靠样式继承而非直接设置 → 换机可能变形，显式设置 |
+| `EQUAL_PARALLEL` | 版式 | warn | 并列项字数悬殊 → 调平（属 G6 节奏，不硬凑） |
+| `SENT_CV_LOW` | 节奏 | warn | 全篇句长过于均匀（`check_rhythm.js`）→ 拆长句、并短句，不为参差而硬改 |
+
+> 退出码：`0` 无阻断，`1` 有项（含 warn），`2` 参数/读取/编码错误。`analyze` 的 `level=error` 才阻断 G4b，`warn` 计入版式未核，`info` 仅记录。

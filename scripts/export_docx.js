@@ -18,7 +18,7 @@ const { DocxPackage } = require('./docformat/docpkg');
 const { getPreset } = require('./docformat/preset');
 const { formatDocument, assertDistinctPaths } = require('./docformat/index');
 const { XML_DECL, escapeText } = require('./docformat/xml');
-const { readText } = require('./docformat/textio');
+const { readTextWithMeta } = require('./docformat/textio');
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -145,7 +145,15 @@ function main() {
 
   let text;
   try {
-    text = readText(args.input);
+    const read = readTextWithMeta(args.input);
+    if (read.encoding === 'unknown') {
+      process.stderr.write('无法识别文件编码：既不是 UTF-8，也不是 GB18030。请转存为 UTF-8 后重试。\n');
+      return 2;
+    }
+    if (read.encoding === 'gb18030') {
+      process.stderr.write('提示：输入不是 UTF-8 编码（已按 GB18030 解码）；建议转存 UTF-8 后重新导出。\n');
+    }
+    text = read.text;
   } catch (error) {
     process.stderr.write('读取失败：' + error.message + '\n');
     return 2;

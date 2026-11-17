@@ -11,7 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { readZip } = require('./docformat/zip');
-const { readText } = require('./docformat/textio');
+const { readText, readTextWithMeta } = require('./docformat/textio');
 // v0.8.1：结语判据不再各写一份——文本层与版式层共用 detect.js 的 CLOSING_RE
 const { CLOSING_RE } = require('./docformat/detect');
 // v0.8.1：文体规则表唯一一份，文本层与版式层共用
@@ -556,6 +556,7 @@ function main() {
   }
 
   let text;
+  let encoding = null;
   let source = 'text';
   const isDocx = path.extname(args.file).toLowerCase() === '.docx';
   const isMarkdown = /\.(md|markdown)$/i.test(args.file);
@@ -565,14 +566,28 @@ function main() {
       text = docxToText(args.file);
       source = 'docx';
     } else {
-      text = readText(args.file);
+      const read = readTextWithMeta(args.file);
+      text = read.text;
+      encoding = read.encoding;
     }
   } catch (error) {
     process.stderr.write('读取失败：' + error.message + '\n');
     return 2;
   }
 
+  if (encoding === 'unknown') {
+    process.stderr.write('无法识别文件编码：既不是 UTF-8，也不是 GB18030。请转存为 UTF-8 后重试（公文文本常见为 GBK/ANSI）。\n');
+    return 2;
+  }
+
   const { issues, chars } = scanLines(text, isMarkdown);
+  if (encoding === 'gb18030') {
+    issues.push({
+      line: 0, code: 'ENCODING_NON_UTF8', severity: 'warn',
+      message: '文件不是 UTF-8 编码（已按 GB18030 解码并正常检查）；建议转存为 UTF-8，'
+        + '否则其他工具或平台读取时可能乱码',
+    });
+  }
   if (!args.noStructure) {
     checkStructure(text, isMarkdown, { type: args.type }).forEach((i) => issues.push(i));
     checkConsistency(text, isMarkdown).forEach((i) => issues.push(i));

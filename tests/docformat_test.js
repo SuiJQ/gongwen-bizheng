@@ -17,7 +17,7 @@ const os = require('os');
 const path = require('path');
 
 const { DocxPackage } = require('../scripts/docformat/docpkg');
-const { writeZip } = require('../scripts/docformat/zip');
+const { writeZip, readZip } = require('../scripts/docformat/zip');
 const xml = require('../scripts/docformat/xml');
 const api = require('../scripts/docformat/index');
 
@@ -615,6 +615,52 @@ test('三个脚本无参调用退出码一致为 2，--help 为 0', () => {
     const help = spawnSync(process.execPath, [path.join(root, f), '--help'], { encoding: 'utf8' });
     assert.strictEqual(help.status, 0, f + ' --help 应为 0，实际 ' + help.status);
   });
+});
+
+// --------------------------------------------- v0.8.2：参数校验与自定义属性
+test('页码参数取值非法必须 exit 2（曾静默兜底成 plain/center）', () => {
+  const { spawnSync } = require('child_process');
+  const cli = path.join(__dirname, '..', 'scripts', 'format_docx.js');
+  const cases = [
+    ['--page-number-style', 'bogus'],
+    ['--page-number-position', 'bogus'],
+  ];
+  cases.forEach(([flag, value]) => {
+    const r = spawnSync(process.execPath,
+      [cli, 'format', SRC, path.join(TMP, 'pn-bad.docx'), '--force', flag, value], { encoding: 'utf8' });
+    assert.strictEqual(r.status, 2, flag + '=' + value + ' 应 exit 2，实际 ' + r.status);
+    assert.ok(/只接受/.test(r.stderr + r.stdout), flag + ' 应说明合法取值，实际：' + (r.stderr || '').slice(0, 80));
+  });
+  // 合法值仍应通过
+  ['dash', 'plain'].forEach((v) => {
+    const r = spawnSync(process.execPath,
+      [cli, 'format', SRC, path.join(TMP, 'pn-ok-' + v + '.docx'), '--force', '--page-number-style', v],
+      { encoding: 'utf8' });
+    assert.strictEqual(r.status, 0, '合法值 ' + v + ' 应 exit 0，实际 ' + r.status);
+  });
+});
+
+test('自定义文档属性被诊断（META_CUSTOM）且 smart 按设计保留', () => {
+  const z = readZip(fs.readFileSync(SRC));
+  const list = z.order.map((n) => ({ name: n, data: z.entries.get(n).data }));
+  list.push({
+    name: 'docProps/custom.xml',
+    data: Buffer.from(xml.XML_DECL +
+      '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties">' +
+      '<property name="内部编号"><vt:lpwstr xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">SECRET-42</vt:lpwstr></property>' +
+      '</Properties>', 'utf8'),
+  });
+  const withCustom = path.join(TMP, 'custom.docx');
+  fs.writeFileSync(withCustom, writeZip(list));
+
+  const report = api.analyzeFile(withCustom);
+  assert.ok(report.issues.some((i) => i.code === 'META_CUSTOM'),
+    '应报 META_CUSTOM，实际：' + JSON.stringify(report.issues.map((i) => i.code)));
+
+  const out = path.join(TMP, 'custom-smart.docx');
+  api.processFile(withCustom, out, { force: true });
+  assert.ok(new DocxPackage(fs.readFileSync(out)).has('docProps/custom.xml'),
+    'smart 按设计保留 custom.xml（属文档数据），删除应由人工确认');
 });
 
 // ------------------------------------------------------------------ 汇总

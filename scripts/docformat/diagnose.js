@@ -355,6 +355,19 @@ function diagnoseMetadata(pkg, issues, platform) {
   if (pkg.has('docProps/thumbnail.jpeg')) {
     issues.push({ code: 'META_THUMBNAIL', level: 'info', category: 'metadata', message: '存在模板缩略图（与实际内容无关）' });
   }
+  // 自定义文档属性（v0.8.2）：smart/meta 按设计保留 custom.xml（属文档数据而非
+  // 生成器痕迹），但里面常带客户编号、系统流水号等内部标识，交付前须人工确认。
+  const custom = pkg.getText('docProps/custom.xml');
+  if (custom) {
+    const count = (custom.match(/<property\b/g) || []).length || 1;
+    issues.push({
+      code: 'META_CUSTOM',
+      level: 'info',
+      category: 'metadata',
+      message: '存在 ' + count + ' 项自定义文档属性（docProps/custom.xml，' +
+        'smart/meta 默认保留）；如含客户编号、系统流水等内部标识，交付前手工删除',
+    });
+  }
   const docXml = pkg.getText(pkg.mainDocumentName) || '';
   const rsidCount = (docXml.match(/\sw:rsid[A-Za-z]*="/g) || []).length;
   if (rsidCount > 0) {

@@ -1,5 +1,51 @@
 # 变更记录
 
+## 0.8.2（2026-11-17）
+
+性质：**全维度审查后的缺陷修复**。文件数仍 46，回归 113 → 119 项（版式 38→40、健壮 11→15）。
+
+### 1｜非 UTF-8 编码被静默当 UTF-8 解码（P1）
+
+**现象**：GBK/GB18030 编码的 `.txt`（老 OA 导出、Excel 另存、记事本"ANSI"）无 BOM，
+`textio.decodeBuffer()` 一律 `buf.toString('utf8')`，非法字节静默变 U+FFFD：
+
+- `check_format.js` 对一份完好的 GBK 通知报 `STRUCT_TITLE` + `STRUCT_DATE`（结论完全错误）；
+- `export_docx.js` **exit 0 报"已生成"**，产出 docx 正文为 `Ѵڰȫ…`，字符数 113 → 177。
+
+**修复**：`textio.js` 增 `decodeBufferWithMeta / readTextWithMeta`，判定顺序
+BOM → 严格 UTF-8（`TextDecoder(..., {fatal:true})`）→ GB18030（`gb18030` 解码后
+U+FFFD 占比 ≤1‰ 才采纳）→ `unknown`。三个入口（`check_format`、`check_rhythm`、`export_docx`）：
+
+- `gb18030` → 正常检查/导出，`check_format` 记 `ENCODING_NON_UTF8`（warn），另两处打提示；
+- `unknown` → exit 2 并说明"请转存 UTF-8"，不再静默当文本。
+
+### 2｜页码参数取值不校验（P2）
+
+`--page-number-style bogus` 曾静默兜底成 `plain`、`--page-number-position bogus` 兜底成 `center`，
+均 exit 0；同文件里 `--preset`、`--platform` 却严格 exit 2。现按同一口径校验：
+`dash|plain`、`outside|center|left|right`，越界即 exit 2 并列出合法值。
+
+### 3｜自定义属性既不清理也不诊断（P3）
+
+`docProps/custom.xml`（客户编号、系统流水等）此前无声通过。按"属文档数据、不属生成器痕迹"
+的既有口径**不自动删除**，但 `analyze` 增 `META_CUSTOM`（info，含条目数）提示人工确认；
+`README` 写明该口径。
+
+### 4｜文档缺口（P3）
+
+- `05-format.md` 增**第十一节 机检码速查**：按"会不会改变修订动作"筛选、同族合并，给每行的"含义 → 动作"（此前 72 个码只有 11 个被文档提及；现全覆盖）。
+- `05-format.md` 版头表区分**下行/平行文的 35 mm**；上行文只写《条例》第九条可核事实（须标签发人、须留位），
+  数值标注"以 GB/T 9704-2012 7.2.2 原文为准"——**未取到标准原文，不写死数字**。
+- `06-language.md` 增**第十三节 用字核对**：截至/截止、颁布/颁发、制定/制订、权力/权利、启用/起用、
+  其他/其它、账/帐、报到/报道、以至/以致、需要/须要，共 10 组；`07-review.md` 的 G4a 与 `SKILL.md`
+  门禁表同步加"用字"。
+- `10-degradation.md` 增加 `##` 分节，删除已失效的"主文件第 304–313 行"引用。
+
+### 5｜测试
+
+- 健壮性 +4：GBK 识别、UTF-8 不误判、随机二进制判 unknown、GBK 经 export 正文不乱码（用十六进制固件，因 Node 仅能解码不能编码 GBK）。
+- 版式 +2：页码参数非法值 exit 2／合法值仍通过；`META_CUSTOM` 被诊断且 `smart` 保留。
+
 ## 0.8.1（2026-11-17）
 
 性质：**全方位审计后的缺陷修复**。文件数 45 → 46（+`scripts/docformat/genre.js`），回归 106 → 113 项。

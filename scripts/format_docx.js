@@ -16,6 +16,10 @@ const fs = require('fs');
 const path = require('path');
 const api = require('./docformat/index');
 const { isSupportedType } = require('./docformat/genre');
+// 页码参数的合法域（v0.8.2）：与 --preset / --platform 同一套校验口径，
+// 避免 `--page-number-style bogus` 静默兜底成 plain 却 exit 0。
+const PAGE_NUMBER_STYLES = ['dash', 'plain'];
+const PAGE_NUMBER_POSITIONS = ['outside', 'center', 'left', 'right'];
 const { readText } = require('./docformat/textio');
 
 const HELP = `公文 DOCX 版式修复与元数据清理（纯 Node，无第三方依赖）
@@ -130,6 +134,18 @@ function buildOptions(args) {
     const raw = readText(args.customSettings);
     const parsed = JSON.parse(raw);
     options.overrides = parsed.overrides || parsed;
+  }
+  if (args.pageNumberStyle) {
+    if (PAGE_NUMBER_STYLES.indexOf(args.pageNumberStyle) < 0) {
+      throw new Error('--page-number-style 只接受 ' + PAGE_NUMBER_STYLES.join(' / ') +
+        '，收到：' + args.pageNumberStyle);
+    }
+  }
+  if (args.pageNumberPosition) {
+    if (PAGE_NUMBER_POSITIONS.indexOf(args.pageNumberPosition) < 0) {
+      throw new Error('--page-number-position 只接受 ' + PAGE_NUMBER_POSITIONS.join(' / ') +
+        '，收到：' + args.pageNumberPosition);
+    }
   }
   if (args.pageNumberStyle || args.pageNumberPosition || args.author || args.application) {
     options.metadataOptions = {};

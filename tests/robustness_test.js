@@ -188,6 +188,54 @@ test('空正文（只有 sectPr）不崩溃', () => {
   assert.ok(new DocxPackage(fs.readFileSync(out)).getText('word/document.xml').includes('</w:document>'));
 });
 
+// ------------------------------------------------- 编码判定（v0.8.2）
+// 背景：无 BOM 的 GBK 曾按 utf8 解码，非法字节静默变 U+FFFD——
+// 机检报"缺标题/缺日期"，导出产出乱码 docx 且 exit 0。
+const { decodeBufferWithMeta } = require('../scripts/docformat/textio');
+
+// Node 的 Buffer 只能解码 GBK、不能编码，故用十六进制固件（Python 生成，内容同下注释）
+// 原文：关于做好汛期安全隐患排查工作的通知\n\n各区县人民政府：\n
+const GBK_SAMPLE = Buffer.from(
+  'b9d8d3dad7f6bac3d1b4c6dab0b2c8abd2febbbcc5c5b2e9b9a4d7f7b5c4cda8d6aa0a0ab8f7c7f8cfd8c8cbc3f1d5feb8aea3ba0a',
+  'hex');
+// 完整稿：标题→主送→缘由→结语→署名→日期
+const GBK_FULL = Buffer.from(
+  'b9d8d3dad7f6bac3d1b4c6dab0b2c8abd2febbbcc5c5b2e9b9a4d7f7b5c4cda8d6aa0a0ab8f7c7f8cfd8c8cbc3f1d5feb8aea3ba0a0a' +
+  'ceaad7f6bac3d1b4c6dab0b2c8abb9a4d7f7a3accfd6becdd3d0b9d8cac2cfeecda8d6aac8e7cfc2a1a30a0accd8b4cbcda8d6aaa1a30a0a' +
+  'a1c1a1c1cad0c8cbc3f1d5feb8ae0a0a32303236c4ea3131d4c23135c8d50a',
+  'hex');
+
+test('无 BOM 的 GBK 文本次要路径：识别为 gb18030 且正文正确', () => {
+  const r = decodeBufferWithMeta(GBK_SAMPLE);
+  assert.strictEqual(r.encoding, 'gb18030', '应识别为 gb18030，实际 ' + r.encoding);
+  assert.ok(r.text.startsWith('关于做好汛期'), '解码后正文应为原文，实际 ' + r.text.slice(0, 12));
+});
+
+test('UTF-8 不被误判为 GB18030', () => {
+  const text = '关于加强安全生产工作的通知\n';
+  const r = decodeBufferWithMeta(Buffer.from(text, 'utf8'));
+  assert.strictEqual(r.encoding, 'utf-8');
+  assert.strictEqual(r.text, text);
+});
+
+test('随机二进制判定为 unknown（不静默当文本）', () => {
+  const buf = Buffer.from([0x00, 0xff, 0xfe, 0x81, 0x40, 0x9a, 0xc3, 0x28]);
+  const r = decodeBufferWithMeta(buf);
+  assert.ok(r.encoding === 'unknown' || r.text.includes('\ufffd'), '应判 unknown，实际 ' + r.encoding);
+});
+
+test('GBK 输入经 export 后正文不乱码（曾产出乱码 docx）', () => {
+  const { execFileSync } = require('child_process');
+  const md = path.join(TMP, 'gbk-src.txt');
+  fs.writeFileSync(md, GBK_FULL);
+  const out = path.join(TMP, 'gbk-out.docx');
+  execFileSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'export_docx.js'), md, out, '--force'],
+    { stdio: 'pipe' });
+  const doc = new DocxPackage(fs.readFileSync(out)).getText('word/document.xml');
+  assert.ok(doc.includes('关于做好汛期安全隐患排查工作的通知'), 'docx 正文缺原文');
+  assert.ok(!doc.includes('\ufffd'), 'docx 正文含替换字符，说明仍按错误编码解码');
+});
+
 // ------------------------------------------------------------------ 汇总
 console.log('\n' + '='.repeat(56));
 console.log('健壮性回归：通过 ' + passed + ' / 失败 ' + failed);
